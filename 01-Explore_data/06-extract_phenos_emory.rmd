@@ -1,0 +1,610 @@
+---
+title: "Extract Phenotypes for NPS DE - Emory"
+date: "`r Sys.Date()`"
+author: "Selina Vattathil"
+output: word_document
+---
+```{r global-chunk-settings-1, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=TRUE, message=TRUE, include=TRUE, collapse=TRUE)
+```
+```{r html-document-settings-1, include=FALSE, eval=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8)
+```
+
+```{r word-document-settings-1, include=FALSE, eval=TRUE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4)
+```
+
+```{r global-options-1, include=FALSE}
+rm(list=ls())
+library(knitr)
+library(data.table)
+library(ggplot2)
+library(lubridate)
+options(stringsAsFactors = FALSE)
+```
+
+
+```{r functions}
+source("~/comsv/Svattathil_Library/svattathil_functions.r")
+## function to use , thousands separator for numbers in kable
+Mkable <- function(x, ...) { kable(x, format.args = list(big.mark = ','), ...) }
+
+```
+
+
+```{r constants}
+sourceset <- "emory"
+```
+
+
+```{r define-input}
+### Files that exist
+filedir <- "0_Data/SharepointFiles/"
+
+## The phenotypes are divided into multiple files
+phesets1 <- c("demographics", "diagnosis", "historyofmed", "mocammse", "npi")
+phesets2 <- c("UDS1", "UDS2", "UDS3")
+phesets3 <- c("dob")
+files.phenos <- c(paste0(filedir, "Phenotypes/Emory/bhc_findinggenetics_",
+                         phesets1, "_bds866.csv"),
+                  paste0(filedir, "Phenotypes/Emory/", phesets2, "-DR2023421WingoNPS.txt"),
+                  paste0(filedir, "Phenotypes/Emory/", "guids_n28_dob.txt"))
+
+names(files.phenos) <- c(phesets1, phesets2, phesets3)
+
+## this file is from Jiaqi's lookup in OBIEE
+file.supprace <- paste0(filedir, "Phenotypes/Emory/guids_w_race_n35.txt")
+
+file.ids <- "2_Pipeline/01-Explore_data/ids_pcafiltered.txt"
+
+file.idmap <- paste0(filedir, "Phenotypes/Emory/case_number_GUID_map.txt")
+```
+
+
+```{r define-output}
+outdir <- "2_Pipeline/01-Explore_data/"
+out.cleanedphenos <- paste0(outdir, "phenos_cleaned_", sourceset, ".txt")
+out.long <- paste0(outdir, "longitudinal_cleaned_", sourceset, ".txt")
+out.patho <- paste0(outdir, "patho_", sourceset, ".txt")
+```
+
+
+```{r read_data}
+ids.all<- fread(file.ids)
+phenos <- sapply(files.phenos, fread, simplify = FALSE)
+idmap <- fread(file.idmap, header=TRUE)
+supprace <- fread(file.supprace)
+```
+
+
+```{r prepare_data}
+## Update column names
+setnames(idmap, "Case_Number", "casenumber")
+setnames(phenos[["mocammse"]], "GLOBAL_SUBJECT_ID", "GUID")
+
+## Restrict ids to this source
+ids0 <- copy(ids.all[source=="Emory", ])
+
+
+### Add GUID to proteomics ids
+ids <- merge(ids0, idmap[, .(casenumber, GUID)],  by.x="ID", by.y="casenumber")
+
+
+### Harmonize UDS visit year columns
+## Thanks to Jiaqi for mapping these out
+dates1 <- as.Date(phenos[["UDS1"]][, em_visit_date], format = "%m/%d/%y")
+phenos[["UDS1"]][, VISITYR := as.numeric(format(dates1, "%Y"))]
+setnames(phenos[["UDS2"]], "visit year", "VISITYR")
+setnames(phenos[["UDS3"]], "visityr", "VISITYR")
+
+setnames(phenos[["UDS1"]], "em_visit_seq_no", "VISITNUM")
+setnames(phenos[["UDS2"]], "em_visit_seq_no", "VISITNUM")
+setnames(phenos[["UDS3"]], "visitnum", "VISITNUM")
+
+
+### Set DOB as date in each of the two tables with DOB
+## have to make dates.fixed because otherwise years are assumed to be 20XX instead of 19XX
+phenos[["dob"]][, dates.fixed := sub("^(\\d{1,2})/(\\d{1,2})/(\\d{2})$", "\\1/\\2/19\\3", DOB_default)]
+phenos[["demographics"]][, dates.fixed := sub("^(\\d{1,2})/(\\d{1,2})/(\\d{2})$", "\\1/\\2/19\\3", DOB)]
+
+## Convert to date format
+phenos[["dob"]][, dob1 := as.Date(dates.fixed,  format = "%m/%d/%Y")]
+phenos[["demographics"]][, dob1 := as.Date(dates.fixed,  format = "%m/%d/%Y")]
+
+
+### Add race observations from Jiaqi's OBIEE lookup. This is for participants that had missing race
+### data in the demographics table.
+setnames(supprace, "Race Default", "RACE_DESC")
+setnames(supprace, "Global Subject ID", "GUID")
+
+for(aguid in supprace[, GUID]) {
+    newrace <- supprace[GUID == aguid, RACE_DESC]
+    if(aguid %in% phenos[["demographics"]][, GUID]) {
+        ## replacing existing value
+        phenos[["demographics"]][GUID == aguid, RACE_DESC := newrace]
+    } else {
+        ## add new row to demographics -- will have data for only GUID and race
+        phenos[["demographics"]] <- rbindlist(list(phenos[["demographics"]], supprace[GUID == aguid, ]), fill=TRUE)
+    }
+}
+rm(aguid)
+
+```
+
+## Goal
+The goal is to extract the NPS and other variables of interest for the
+`r nrow(ids)` participants in the proteomics dataset. 
+
+
+## Data
+#### Phenotypes
+Sharepoint directory: 
+
+Common - Dry Lab > Grant_RO1_NPS_in_AD > 3_Emory NPS data
+
+I'm using seven phenotype files. Five different phenotype files with
+suffix _bds866.csv from directory 'data from Emory': 
+
+Cross-sectional: 
+
+ * demographics
+
+ 
+Longitudinal: 
+
+ * diagnosis
+ * historyofmed
+ * mocammse
+ * npi
+
+I am referencing Jiaqi's reports from October 2023, which referenced
+these files. 
+
+I'm also using the file UDS1-3_DR2023421WingoNPS.xlsx from directory
+'data from GADRC'. This excel file has a sheet with a map of case
+number, GUID, and CRIN ID, and three NPS datasets:
+
+Longitudinal:
+
+ * UDS1
+ * UDS2
+ * UDS3 
+ 
+Finally, Jiaqi queried Emory OBIEE 
+for DOB for 28 participants that were
+missing from the demographics file above, and race for those 28
+participants plus 7 participants that did not report race. 
+ * dob
+ * race
+
+
+#### Proteomics samples
+The proteomics samples are identified by case IDs of format E12-34 or
+OS-123456. The phenotype files are identified by GUID or patient
+ID. To link them, I used the table in the GADRC UDS1-3 excel sheet.
+
+
+## Results
+### Merge UDS1 followup variables
+The variables are mostly the same across the datasets, except UDS1 separates the followup
+visits from the initial visits, i.e. there is variable `normcog` and
+separate variable `fu_normcog`. For all the variables of interest,
+I combined the initial and followup observations by filling in missings
+in the initial with the observation from the `fu` variable. That will
+make the variable names consistent across datasets.
+
+
+```{r merge-UDS1-fu-variables}
+## Make vector of variables that need to be merged with their fu_counterparts
+## variable fu_newinf doesn't have a matching newinf variable
+vars.tomerge <- substring(grep("^fu", names(phenos[["UDS1"]]), value = TRUE), 4)
+vars.tomerge <- setdiff(vars.tomerge, "newinf")
+
+## Do merge/replacement 
+for(avar in vars.tomerge) {
+    col.ini <- avar               
+    col.fu <- paste0("fu_", avar)
+    
+    phenos[["UDS1"]][is.na(get(col.ini)), (col.ini) := get(col.fu)]
+}
+
+```
+
+### Dimensions of complete phenotype files
+```{r check_data}
+## Check number of observations and participants in each phenotype set
+## demographics is cross-sectional, but there are a few duplicated participants
+## the other phenotypes are longitudinal
+Mkable(rbind(n.rows = sapply(phenos, nrow), 
+      n.unique.GUIDs = sapply(phenos, function(x) { length(unique(x$GUID))})))
+```
+
+### Dimensions after filtering to participants in proteomics datasets
+Now I filtered to rows for the `r length(unique(ids$GUID))` GUIDs in
+the proteomics ID file. 
+
+```{r extract_data, include = TRUE}
+### Extract data for participants of interest
+## Here we'll keep all the available columns
+phenos.ana <- sapply(phenos, function(x) { x[GUID %in% ids$GUID, ] }, simplify = FALSE)
+
+## Check row and participant counts again
+Mkable(rbind(n.rows = sapply(phenos.ana, nrow), 
+            n.unique.GUIDs = sapply(phenos.ana, function(x) { length(unique(x$GUID))})))
+
+
+### Check how many participants are covered by the NPS datasets
+guids.in.nps <- unique(unlist(sapply(c("npi", phesets2), function(x) { phenos.ana[[x]]$GUID })))
+
+guids.in.UDS <- unique(unlist(sapply(c(phesets2), function(x) { phenos.ana[[x]]$GUID })))
+
+### Check how many are only in the NPI dataset
+#setdiff(guids.in.nps, unique(unlist(sapply(c(phesets2), function(x) { phenos.ana[[x]]$GUID }))))
+
+
+```
+
+Of the `r nrow(ids)` participants with proteomics, I can find `r length(guids.in.UDS)` in the UDS
+datasets. 
+
+Regarding the one missing, in the list of 93 people noted as having NPS in
+the UDS1-3 -DR2023421WingoNPS.xlsx file, I see that GUID 40588 is
+highlighted in red as 'not a UDS participant', so there must have been
+some issue there. I am guessing that NPS is not available for this
+person. 
+  
+
+### Sanity checks
+#### Demographics table
+The phenotype data includes a demographic table, but only 
+`r length(unique(phenos.ana[["demographics"]]$GUID))` of the `r nrow(ids)`
+participants of interest are included. While I can get sex from the
+proteomics file, I need the demographics file to get date of birth,
+and I need date of birth if we want age at last NPS observation. The
+visits in the UDS dataset are identified by visit date, not
+participant age. 
+
+
+#### Sex
+Check that msex from
+proteomics ID table matches gender description from demographics
+phenotype file:
+
+```{r check_sex}
+merged <- merge(ids, phenos[["demographics"]], by = "GUID")
+sextab <- table(merged[, .(msex, GENDER_DESC)])
+nmismatch <- sextab[1,2] + sextab[2,1]
+Mkable(table(merged[, .(msex, GENDER_DESC)]))
+
+guids.sexmismatches <- merged[(msex == 1 & GENDER_DESC=="Female") |
+                        (msex == 0 & GENDER_DESC=="Male"), GUID]
+
+```
+
+Note: there is `r nmismatch` mismatch between the proteomics `msex`
+value and the demographics table `GENDER_DESC` value among the `r sum(sextab)`
+participants. 
+
+
+#### Race
+Here is the reported race from the demographics table. 
+`r Mkable(rbind(addmargins(table(phenos.ana[["demographics"]]$RACE_DESC, useNA="ifany"))))`
+
+
+```{r }
+## Count the number of individuals in different subsets of datasets
+phesets.nps <- c("npi", phesets2)
+presence_matrix <- data.frame(sapply(phenos[phesets.nps], function(x) { ids$GUID %in% x$GUID }))
+presence_matrix$n.sets <- apply(presence_matrix, 1, sum)
+setDT(presence_matrix)
+presence_matrix$GUID <- ids$GUID
+
+```
+
+```{r get-last}
+### Combine the GUID and VISITYR and VISITNUM columns from each UDS set
+### to count number of visits and identify the last available NPS for each person
+visits.all <- rbindlist(sapply(phesets2, function(x) { phenos.ana[[x]][, .(GUID, VISITYR, VISITNUM)]   },
+                            simplify = FALSE), idcol = "pheset")
+
+### Count visits per participant
+n.visits <- table(visits.all$GUID)
+summ.n.visits <- summary(as.vector(n.visits))
+
+### Sort by year and visit number and extract last visit per participant
+setorder(visits.all, GUID, VISITYR, VISITNUM)
+lastvisit <- visits.all[, tail(.SD, 1), by = "GUID"]
+lastvisit <- merge(lastvisit, ids[, .(GUID, age_death)], by = "GUID")
+
+
+```
+
+
+### Number of visits per participant
+Here is the summary of the number of visits per participant. 
+
+```{r table-nvisits}
+Mkable(rbind((summ.n.visits)))
+```
+
+### Determine NPS dataset with last observation for each participant
+Here is the breakdown of which dataset has the last available visit
+for our participants. This is before checking for NAs. 
+
+```{r table-last-visit-pheset}
+Mkable(rbind(addmargins(table(lastvisit$pheset))))
+```
+
+
+```{r extract-last-visits}
+## For each participant, extract the last available visit
+lastobs1 <- sapply(phesets2, function(aset) {
+    ## Get projids for participants whose last visit was in this set
+    guids <- lastvisit[pheset == aset, GUID]
+
+    ## Extract all visits for those participants
+    extracted <- phenos.ana[[aset]][GUID %in% guids, ]
+
+    ## Return last visit for those participants
+    setorder(extracted, VISITNUM) ## sort by visit number
+    return(extracted[, tail(.SD, 1), by = "GUID"]) ## return last row for each participant
+}, simplify = FALSE)
+
+
+```
+
+
+### Get last visit cognitive status
+```{r get-last-visit-cog-status}
+## Extract columns
+fordx <- rbindlist(list(UDS1 = lastobs1[["UDS1"]][, .(GUID, VISITYR, VISITNUM, normcog, demented, probad)],
+                        UDS2 = lastobs1[["UDS2"]][, .(GUID, VISITYR, VISITNUM, normcog, demented, probad)],
+                        UDS3 = lastobs1[["UDS3"]][, .(GUID, VISITYR, VISITNUM, normcog, demented, alzdis)]),
+                   use.names = TRUE, fill = TRUE, idcol="pheset")
+
+fordx[, dx := NA_character_]
+fordx[normcog == 1, dx := "normal"]
+fordx[normcog == 0 & (demented == 1 | probad == 1 | alzdis == 1), dx := "AD"]
+fordx[normcog == 0 & demented == 1 & (probad == 0 | alzdis == 0), dx := "other_dementia"]
+
+```
+
+```{r check-moca-mmse, include = FALSE}
+## Extract rows for our participants with non-missing result
+mocammse.nonmissing <- phenos[["mocammse"]][(GUID %in% ids$GUID) & !is.na(SERVICE_DT) & (!is.na(MOCA_RAW_SCORE) | !is.na(MMSE_RAW_SCORE)), ]
+
+## count participants
+n.mocammse <- length(unique(mocammse.nonmissing$GUID))
+
+## check if participants with normal cognition have moca/mmse scores
+fordx[dx == "normal", GUID] %in% mocammse.nonmissing$GUID
+
+```
+
+Jiaqi used a combination of variables `normcog`, `demented`, `probad`, and
+`alzdis` to define the dementia status for each participant. 
+Using the same criteria, here is the cognitive status distribution at
+the last visit: 
+
+`r Mkable(rbind(addmargins(table(fordx$dx, useNA="ifany"))))` 
+
+Two participants had normal cognition at their last visit, but from
+other notes we know these had dementia at their final diagnosis, so
+they will be kept in the analysis. 
+
+We do have a dataset with MOCA/MMSE scores, but we have non-missing
+data for only `r n.mocammse` participants. 
+
+
+
+```{r eval=FALSE}
+sapply(phenos[phesets2], names)
+```
+
+
+### Time between last NPS and death
+```{r time-last-visit-death}
+### Aggregates dates of birth from the two phenos tables
+dobs0 <- rbind(phenos.ana[["demographics"]][, .(GUID, dob1)],
+              phenos.ana[["dob"]][, .(GUID, dob1)])
+
+### Merge in date of last visit
+### Add version with month and day, assume January 1
+lastage <- merge(dobs0, fordx[, .(GUID, VISITYR)], by = "GUID")
+lastage[, visityr := as.Date(paste0(VISITYR, "-01-01"))]
+
+### Calculate age at last visit
+lastage[, age.int := lubridate::time_length(interval(dob1, visityr), "years")]
+
+### Calculate time between last NPS visit and death
+timetab <- merge(lastage, ids[, .(GUID, age_death)], by = "GUID")
+timeinterval <- timetab[, age_death - age.int]
+
+hist(timeinterval, breaks=20, col="Azure2",
+     main = "Time between last NPS and death", xlab = "Years")
+
+```
+
+Of the `r nrow(timetab)` participants, `r sum(timeinterval < 2)` 
+(`r MakeFrac(mean(timeinterval < 2))`%) have last NPS observation within two
+years of death. Is this something we want to filter or adjust for? 
+
+
+### Get last visit NPS status 
+I'm assuming we are interested in nine individual NPS symptoms. For
+each NPS, there is a binary variable and a severity variable. Here are
+the distributions of each. 
+
+
+```{r get-last-visit-nps}
+### Extract last visit NPS -- both case/control and severity measures
+npsvars.bin <- c(agitation = "agit", anxiety = "anx", apathy = "apa", delusion = "del",
+                 depression = "depd", disinhibition = "disn", hallucination = "hall",
+                 irritability = "irr", sleep = "nite")
+npsvars.sev <- paste0(npsvars.bin, "sev")
+names(npsvars.sev) <- names(npsvars.bin)
+
+fornps <- rbindlist(list(UDS1 = lastobs1[["UDS1"]][, c("GUID", "VISITYR", "VISITNUM", npsvars.bin, npsvars.sev), with = FALSE],
+                         UDS2 = lastobs1[["UDS2"]][, c("GUID", "VISITYR", "VISITNUM", npsvars.bin, npsvars.sev), with = FALSE],
+                         UDS3 = lastobs1[["UDS3"]][, c("GUID", "VISITYR", "VISITNUM", npsvars.bin, npsvars.sev), with = FALSE]),
+                   use.names = TRUE, fill = TRUE, idcol="pheset")
+
+
+### Tabulate case/control status
+MakeNPSbintab <- function(dattab) {
+    ## Tabulate
+    dist.nps.bin <- data.table(t(dattab[, sapply(.SD, function(x) { table(x, useNA = "always") }), .SDcol = npsvars.bin]))
+    dist.nps.bin[, nps:= npsvars.bin]
+    setnames(dist.nps.bin, c("0", "1", "V3"), c("no", "yes", "NA"))
+
+    ## Add readable NPS names 
+    dist.nps.bin <- merge(dist.nps.bin, data.table(NPS = names(npsvars.bin), nps = npsvars.bin), by = "nps")
+
+    ## Add percent cases column
+    ## Reorder rows and columns 
+    dist.nps.bin[, percent.cases := sapply((yes / (no + yes)*100), function(x) { paste0(sprintf("%.1f",x), "%") })]
+    setcolorder(dist.nps.bin, c("nps", "NPS", "percent.cases"))
+    setorder(dist.nps.bin, percent.cases)
+    return(dist.nps.bin)
+}
+
+dist.nps.bin <- MakeNPSbintab(fornps)
+
+
+### Tabulate severity status
+## Save original severity variables with suffix .orig
+## We are going to recode them from NA/1/2/3 to 0/1/2/3
+for(avar in npsvars.bin) {
+    var.bin <- avar
+    var.sev <- paste0(avar, "sev")
+    fornps[, (paste0(var.sev, ".orig")) := get(var.sev)]
+    fornps[is.na(get(var.sev)) & get(var.bin) == 0, (var.sev) := 0]
+
+    fornps[, (var.sev) := factor(get(var.sev), levels=c(0:3))]
+}
+rm(avar)
+
+## Tabulate
+dist.nps.sev <- data.table(t(fornps[, sapply(.SD, function(x) { table(x, useNA = "always") }), .SDcol = npsvars.sev]))
+dist.nps.sev[, nps:= npsvars.sev]
+setnames(dist.nps.sev, c("V5"), c("NA"))
+
+## Add readable NPS names 
+dist.nps.sev <- merge(dist.nps.sev, data.table(NPS = names(npsvars.sev), nps = npsvars.sev), by = "nps")
+
+## Reorder rows and columns 
+setcolorder(dist.nps.sev, c("nps", "NPS"))
+setorderv(dist.nps.sev, cols=("0"), order = -1 )
+
+### Print tables
+Mkable(dist.nps.bin, caption = "Case/control distribution at last visit. ")
+
+Mkable(dist.nps.sev, caption = "Severity distribution at last visit. ")
+
+```
+
+There are a few participants with missing values at the last visit for
+all NPS variables. These all had only one available visit, and they
+had AD. These will be dropped from analysis. GUIDs:
+
+
+```{r find.missing.all.nps}
+index.missing.all.nps <- apply(fornps[, c(npsvars.bin), with = FALSE], 1, function(x) { all(is.na(x)) })
+ids.missing.all.nps <- fornps[index.missing.all.nps, GUID]
+ids.missing.all.nps
+
+```
+```{r }
+dist.nps.bin.updated <- MakeNPSbintab(fornps[!GUID %in% ids.missing.all.nps, ])
+Mkable(dist.nps.bin.updated, caption = "Case/control distribution at last visit (after removing participants with all missing data).")
+
+```
+
+
+```{r prep-final-dataset}
+### Make vector of GUIDs that have non-missing NPS and meet all other criteria
+ids.forana <- setdiff(ids$GUID, ids.missing.all.nps)
+ids.forana <- intersect(ids.forana, guids.in.nps)
+
+### Assemble the variables of interest for those participants from the phenos file
+forprint0 <- fornps[, c("GUID", npsvars.bin, npsvars.sev), with = FALSE]
+
+### Merge in variables from proteomics file
+ids.sub <- ids[GUID %in% ids.forana, ]
+forprint1 <- merge(ids.sub[, !c("KX.", "channel", "batch", "WorkingID")], forprint0, by.x="GUID", by.y = "GUID")
+
+```
+
+
+### Covariate distributions
+Here are the distributions for some of the covariates of interest for
+the `r length(ids.forana)` participants to be included in the analysis. 
+
+```{r hist-covars, fig.height=6}
+par(mfrow=c(2,2))
+
+##PlotCategorical("GENDER_DESC", phenos.ana[["demographics"]]); title("from demographics table", line=0.5)
+PlotCategorical("msex", ids.sub)
+PlotCategorical("dx", fordx[GUID %in% ids.forana,], xsrt=45); title("at last visit", line = 0.5)
+PlotContinuous("age_death", ids.sub)
+PlotContinuous("pmi", ids.sub)
+
+```
+
+
+```{r prep-long-data}
+datecols <- c("DAY_SERVICE_DATE", "em_visit_date", "VISITYR", "VISITNUM")
+datecols <- c("em_visit_date", "VISITYR", "VISITNUM")
+
+forlong <- sapply(phesets2, function(aset) {
+    phenos[[aset]][GUID %in% ids.forana, intersect(c("GUID", datecols, npsvars.bin, npsvars.sev), names(phenos[[aset]])), with = FALSE]
+    }, simplify = FALSE)
+
+
+nps.long.forprint0 <- rbindlist(forlong, idcol="pheset", fill = TRUE)
+setorder(nps.long.forprint0, GUID, VISITYR, VISITNUM)
+nps.long.forprint1 <- merge(ids.sub[, .(protsample, GUID)], nps.long.forprint0, by = "GUID")
+
+
+```
+
+
+### Gather dementia severity and pathology severity variables for
+### comparing to other cohorts
+```{r }
+## Extract last available moca/mmse scores
+mocammse_long = phenos.ana$mocammse[, .(GUID, SERVICE_DT, TEST_NM, MOCA_RAW_SCORE, MMSE_RAW_SCORE), ]                       
+setorder(mocammse_long, SERVICE_DT)
+mocammse_last <- mocammse_long[, tail(.SD, 1), by = GUID]
+
+## Add prefix labels to columns for each dataset
+setnames(mocammse_last, setdiff(names(mocammse_last), "GUID"), paste0("score_", setdiff(names(mocammse_last), "GUID")))
+setnames(fordx, setdiff(names(fordx), "GUID"), paste0("UDS_", setdiff(names(fordx), "GUID")))
+
+
+## Merge with last available UDS diagnosis
+patho <- merge(mocammse_last, fordx, by = "GUID", all = TRUE)
+
+                  
+```
+
+
+
+
+### Conclusions / To Do 
+
+ * Of the `r nrow(ids)` participants in the proteomics dataset from this cohort,
+ we'll keep `r nrow(ids.sub)` for analysis.
+ * To Do: Is there any way to resolve the one sample with sex discrepancy?
+ * To Do: Can we verify that NPS for GUID 40588 is not available?
+ * To Do: Are there any other covariates that we want to keep? 
+ 
+
+
+```{r finish}
+## Write cleaned phenos to file
+write.table(forprint1, file = out.cleanedphenos, row.names = FALSE, quote = FALSE, sep = "\t")
+write.table(nps.long.forprint1, file = out.long, row.names = FALSE, quote = FALSE, sep = "\t")
+write.table(patho, file = out.patho, row.names = FALSE, quote = FALSE, sep = "\t")
+```

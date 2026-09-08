@@ -1,0 +1,503 @@
+---
+title: "Extract phenotypes for NPS DE - OHSU"
+author: "Selina Vattathil"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r global-options-1, include=FALSE}
+rm(list=ls())
+library(knitr)
+library(data.table)
+#library(ggplot2)
+options(stringsAsFactors = FALSE)
+source("~/comsv/Svattathil_Library/svattathil_functions.r")
+```
+
+```{r global-chunk-settings-1, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=TRUE, message=TRUE, include=TRUE, collapse=TRUE)
+```
+
+```{r word-document-settings-1, include=FALSE, eval=TRUE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4)
+```
+
+```{r html-document-settings-1, include=FALSE, eval=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8)
+```
+
+```{r constants}
+sourceset <- "OHSU"
+```
+
+
+```{r functions, include=FALSE}
+## function to use , thousands separator for numbers in kable
+Mkable <- function(x, ...) { kable(x, format.args = list(big.mark = ','), ...) }
+
+## tabulate distribution of binary variables
+MakeNPSbintable <- function(dattab) {
+  ## Tabulate
+  disttab <- data.table(t(dattab[, sapply(.SD, function(x) { table(x, useNA = "always") }), .SDcol = npsvars.bin]))
+  disttab[, nps:= npsvars.bin]
+  setnames(disttab, c("0", "1", "V3"), c("no", "yes", "NA"))
+
+  ## Add readable NPS names 
+  disttab <- merge(disttab, data.table(NPS = names(npsvars.bin), nps = npsvars.bin), by = "nps")
+
+  ## Add percent cases column
+  ## Reorder rows and columns 
+  disttab[, percent.cases := sapply((yes / (no + yes)*100), function(x) { paste0(sprintf("%.1f",x), "%") })]
+  setcolorder(disttab, c("nps", "NPS", "percent.cases"))
+  setorder(disttab, yes)
+  return(disttab)
+}
+
+## tabulate distribution of severity variables
+MakeNPSsevtable <- function(dattab) {
+  ## Tabulate
+  disttab <- data.table(t(dattab[, sapply(.SD, function(x) { table(x, useNA = "always") }), .SDcol = npsvars.sev]))
+  disttab[, nps:= npsvars.sev]
+  setnames(disttab, c("V5"), c("NA"))
+
+  ## Add readable NPS names 
+  disttab <- merge(disttab, data.table(NPS = names(npsvars.sev), nps = npsvars.sev), by = "nps")
+
+
+  ## Add case/control columns -- define 0/1 as controls and 2/3 as cases
+  ## Add percent cases columns
+  disttab[, control.sev := apply(.SD, 1, sum), .SDcol=c("0", "1")]
+  disttab[, case.sev := apply(.SD, 1, sum), .SDcol=c("2", "3")]
+  disttab[, percent.cases := sapply((case.sev / (case.sev + control.sev)*100), function(x) { paste0(sprintf("%.1f",x), "%") })]
+
+  ## Reorder rows and columns 
+  setcolorder(disttab, c("nps", "NPS"))
+  setorderv(disttab, cols=("0"), order = -1 )
+  return(disttab)
+}   
+
+```
+
+
+```{r define-input}
+file.ids <- "2_Pipeline/01-Explore_data/ids_pcafiltered.txt"
+
+filedir <- "0_Data/SharepointFiles/"
+
+phesets <- c(nps_cirs = "ALL_NPIQ_CIRS_QUESTIONS_042423",
+             demog1    = "N205_WINGO_REGISTRY",
+             demog2    = "N206_OHSU_withTissue")
+
+files.phenos <-paste0(filedir, "Phenotypes/OHSU/", phesets, ".txt")
+names(files.phenos) <- names(phesets)
+
+```
+
+
+```{r define-output}
+outdir <- "2_Pipeline/01-Explore_data/"
+out.cleanedphenos <- paste0(outdir, "phenos_cleaned_", sourceset, ".txt")
+out.long <- paste0(outdir, "longitudinal_cleaned_", sourceset, ".txt")
+out.patho <- paste0(outdir, "patho_", sourceset, ".txt")
+out.patho_filtered_cleaned <- paste0(outdir, "patho_", sourceset, "_filtered_cleaned.txt")
+```
+
+
+```{r read-data}
+### Read in data
+ids.all <- fread(file.ids)
+phenos <- lapply(files.phenos, fread)
+```
+
+
+```{r prepare-data-1}
+### Prepare data
+## Extract ids for this source
+ids <- ids.all[source=="OHSU", ]
+
+
+## set ID as numeric
+ids[, ID := as.numeric(ID)]
+
+## Update column names
+setnames(phenos[["nps_cirs"]], "REGbfoNum", "bfonum")
+setnames(phenos[["demog1"]], "REGbfoNum", "bfonum")
+setnames(phenos[["demog2"]], "BFO", "bfonum")
+
+setnames(phenos[["demog1"]], "Rpatid", "rpatID")
+setnames(phenos[["demog2"]], "SampleID", "rpatID")
+
+## Remove duplicate column
+phenos[["nps_cirs"]][, VSTseqno := NULL]
+
+```
+
+## Goal
+The goal is to extract the NPS and other variables of interest for the
+`r nrow(ids)` `r sourceset` participants in the proteomics dataset. 
+
+
+## Data
+#### Phenotypes
+Sharepoint directory: 
+
+Common - Dry Lab > Grant_RO1_NPS_in_AD
+Relative paths to files: 
+ * N206_OHSU_withTissue.xls
+ * 2023 phenotypes OSHU > ALL NPIQ CIRS QUESTIONS 042423.xlsx
+ * 2023 phenotypes OSHU > N205 WINGO REGISTRY.xlsx
+
+
+The NPIQ_CIRS table is longitudinal and the other two are
+cross-sectional files with diagnosis and demographic info. 
+
+#### Proteomics samples
+The proteomics samples are identified by four-digit numeric IDs which are the
+OHSU BFONUMs. 
+
+
+### Results
+## Dimensions of complete phenotype files
+```{r check_data}
+## Check number of observations and participants in each phenotype set
+Mkable(rbind(n.rows = sapply(phenos, nrow), 
+      n.unique.participants = sapply(phenos, function(x) { length(unique(x$bfonum))})))
+```
+
+## Dimensions after filtering to participants in proteomics datasets
+Now I filtered to rows for the `r length(unique(ids$ID))` IDs in
+the proteomics ID file. 
+
+```{r extract_data}
+### Extract data for participants of interest
+## Here we'll keep all the available columns
+phenos.ana0 <- sapply(phenos, function(x) { x[bfonum %in% ids$ID, ] }, simplify = FALSE)
+
+## Check row and participant counts again
+Mkable(rbind(n.rows = sapply(phenos.ana0, nrow), 
+            n.unique.participants = sapply(phenos.ana0, function(x) { length(unique(x$bfonum))})))
+
+
+### Check how many participants are covered by the NPS datasets
+ids.in.nps <- unique(phenos.ana0[["nps_cirs"]]$bfonum)
+ids.missing.nps <- setdiff(ids$ID, ids.in.nps)
+
+ids.absent.demog1 <- setdiff(ids.missing.nps, phenos[["demog1"]][, bfonum])
+ids.nonpiq.demog1 <- phenos[["demog1"]][bfonum %in% ids.missing.nps & npiqcount == 0, bfonum]
+
+
+```
+Of the `r nrow(ids)` participants with proteomics, I can find 
+`r length(ids.in.nps)` in the NPS dataset. Of the 
+`r length(ids.missing.nps)` missing, I see that 
+`r length(ids.absent.demog1)` are missing from
+dataset `demog1` and `r length(ids.nonpiq.demog1)` have value `0` for
+variable `npiqcount`.
+Some do have non-zero for variable `npcount`, but looks like we only
+got NPIQ. Here are the IDs (bfonums) for participants absent from `nps_cirs` data: 
+
+```{r missing-nps}
+ids.missing.nps
+```
+
+The rest of the exploration will focus on the `r length(ids.in.nps)`
+participants present in the data.
+
+```{r , include = FALSE}
+### Extract data for participants present in NPS dataset
+phenos.ana1 <- sapply(phenos.ana0, function(x) { x[bfonum %in% ids.in.nps, ] }, simplify = FALSE)
+
+## Check row and participant counts one more time 
+Mkable(rbind(n.rows = sapply(phenos.ana1, nrow), 
+            n.unique.participants = sapply(phenos.ana1, function(x) { length(unique(x$bfonum))})))
+
+### Count visits per participant
+n.visits <- table(phenos.ana1[["nps_cirs"]]$bfonum)
+summ.n.visits <- summary(as.vector(n.visits))
+```
+
+### Number of visits per participant
+
+Here is the summary of the number of visits per participant. 
+
+```{r table-nvisits}
+Mkable(rbind((summ.n.visits)))
+```
+
+
+### Sanity checks
+
+```{r check-sex}
+sanity <- merge(ids, phenos.ana1[["demog1"]][, .(bfonum, Rsex, Rethnic, REGhispanic, Age_at_death, Rdxcode)], by.x = "ID", by.y = "bfonum")
+
+checks <- vector()
+## Check that sex matches
+sextab <- table(sanity[, .(msex, Rsex)])
+checks["sex"] <- all(c(sextab[0,1], sextab[1,0]) == 0)
+
+## Check that age at death matches
+checks["age_death"] <- sum(sanity[, age_death - Age_at_death]) == 0
+
+## Check race and ethnicity
+checks["race"] <- all(sanity$Rethnic == "CAUCASIAN")
+checks["ethnicity"] <- all(sanity$REGhispanic %in% c("", "NO"))
+
+msg <- ifelse(all(checks), "They all look fine.",
+              "Need to check follow up on this -- there is some discrepancy.")
+
+par(mfrow=c(1,2))
+PlotCategorical("Rethnic", sanity)
+PlotCategorical("REGhispanic", sanity)
+
+```
+
+I checked the race and ethnicity and compared sex and age at death
+from the demographic table to the values in the proteomics table. 
+`r msg`
+
+`r rm(msg)`
+
+### Check clinical diagnosis
+Here is the breakdown of clinical diagnosis. 
+
+
+```{r }
+demog.merged <- Reduce( function(x, y) { merge(x, y, by = c("bfonum", "rpatID")) }, phenos.ana1[c("demog1", "demog2")])
+
+dxkey <- data.table(matrix(c(
+"INCIPDEM", "Incipient dementia", 
+"MIXED", "Mixed dementia, specify causes", 
+"POAD", "Poss AD - other complications",
+"PRAD", "Probable Alzheimer's disease",
+"QUESTDEM", "Questionable dementia"
+), byrow = TRUE, ncol = 2))
+names(dxkey) <- c("var", "defini")
+setDT(dxkey)
+setkey(dxkey, "var")
+
+demog.merged[, diagnosis := dxkey[clinical_dx, "defini"]]
+Mkable(addmargins(table(demog.merged[, diagnosis], useNA = "ifany")), caption = "Clinical diagnosis from demographic table.")
+
+```
+
+Is there a way to rank these if we want/need to? 
+
+
+### Get last visit NPS
+The NPS data take the usual NPI format, with case/control and
+severity variables for each NPS symptom. 
+
+
+```{r get-last-nps}
+npsvars.bin <- c(agitation = "agit", anxiety = "anx", apathy = "apa", delusion = "del",
+                 depression = "depd", disinhibition = "disn", hallucination = "hall",
+                 irritability = "irr", sleep = "nite")
+npsvars.sev <- paste0(npsvars.bin, "sev")
+names(npsvars.sev) <- names(npsvars.bin)
+
+
+varmatch <- sapply(toupper(npsvars.bin), grep, names(phenos[["nps_cirs"]]), value = TRUE)
+
+nps.long <- phenos.ana1[["nps_cirs"]][, c("bfonum", "rpatID", "VSTage", "VSTseqno", as.vector(varmatch)), with = FALSE]
+setnames(nps.long, varmatch[1, ], npsvars.bin)
+setnames(nps.long, varmatch[2, ], npsvars.sev)
+
+
+### Fill in 0 for NAs in severity variables
+for(avar in npsvars.bin) {
+    var.bin <- avar
+    var.sev <- paste0(avar, "sev")
+    nps.long[is.na(get(var.sev)) & get(var.bin) == 0, (var.sev) := 0]
+    nps.long[, (var.sev) := factor(get(var.sev), levels=c(0:3))]
+}
+rm(avar)
+
+### Substitute -2222 missing code with NA
+nps.long[, (names(nps.long)) := lapply(.SD, function(x) {x[x == -2222] <- NA; x}), ]
+
+### Extract last visit per participant
+setorder(nps.long, "VSTage")
+nps.last <- nps.long[, tail(.SD, 1), by = "bfonum"]
+```
+
+
+```{r check-time-to-death}
+### Make table to look at time from death to last NPS visit
+timetab <- merge(ids[, .(ID, age_death)], nps.last[, .(bfonum, VSTage)], by.x = "ID", by.y = "bfonum")
+timeinterval <- timetab[, age_death - VSTage] 
+hist(timeinterval, breaks = 40, col = "azure2", main = "time between last NPS and death", xlab = "Years")
+
+```
+
+The time between last NPS visit and death is longer than we saw in the
+other cohorts. Still, of the `r nrow(timetab)` participants, `r sum(timeinterval < 2)` 
+(`r MakeFrac(mean(timeinterval < 2))`%) have last NPS observation within two
+years of death. Is this something we want to filter or adjust for? 
+
+Here is the distribution of case/control status and severity at the
+last visit for each NPS.
+
+
+```{r tabulate-NPS}
+## Make tables
+dist.nps.bin <- MakeNPSbintable(nps.last)
+dist.nps.sev <- MakeNPSsevtable(nps.last)
+
+### Print tables
+Mkable(dist.nps.bin, caption = "Case/control distribution at last visit. ")
+Mkable(dist.nps.sev, caption = "Severity distribution at last visit. ")
+```
+
+
+```{r find.missing.all.nps, include = FALSE}
+### Get IDs for people missing all NPS
+index.missing.all.nps <- apply(nps.last[, npsvars.bin, with = FALSE], 1,  function(x) { all(is.na(x)) })
+ids.missing.all.nps <- nps.last[index.missing.all.nps, bfonum]
+
+### Check if NPS is available for any other visits 
+nps.long[bfonum %in% ids.missing.all.nps, ]
+```
+
+There are a few participants with missing values at the last visit for
+all NPS variables. These participants have other visits in the
+dataset, but they have complete NAs for al of those visits too so I
+don't see a way to include them. They'll be dropped from analysis. The ids (bfonums) are: 
+
+```{r print.missing.all.nps}
+ids.missing.all.nps
+
+```
+
+```{r update-outcome-tables-exclude-samps-all-missing}
+dist.nps.bin.updated <- MakeNPSbintable(nps.last[!bfonum %in% ids.missing.all.nps, ])
+dist.nps.sev.updated <- MakeNPSsevtable(nps.last[!bfonum %in% ids.missing.all.nps, ])
+
+Mkable(dist.nps.bin.updated, caption = "Case/control distribution at last visit (after removing participants with all missing data). ")
+Mkable(dist.nps.sev.updated, caption = "Severity distribution at last visit(after removing participants with all missing data). ")
+```
+
+```{r add-collapsed-vars}
+nps.last[, psych := apply(.SD, 1, any), .SDcol=c("hall", "del")]
+
+
+```
+
+
+```{r prep-final-dataset}
+### Make vector of GUIDs that have non-missing NPS and meet all other criteria
+ids.forana <- setdiff(ids.in.nps, ids.missing.all.nps)
+
+### Assemble the variables of interest for those participants from the phenos file
+forprint0 <- merge(demog.merged[bfonum %in% ids.forana, .(bfonum, rpatID, clinical_dx)],
+                   nps.last[, c("bfonum", npsvars.bin, npsvars.sev), with = FALSE], by = "bfonum")
+
+### Merge in variables from proteomics file
+ids.sub <- ids[ID %in% ids.forana, ]
+forprint1 <- merge(ids.sub[, !c("KX.", "channel", "batch", "WorkingID")],
+                   forprint0, by.x="ID", by.y = "bfonum")
+
+### Extract pathologic diagnosis
+pathdiag <- demog.merged[bfonum %in% ids.forana, .(bfonum, path_dx)]
+pathdiag[, dx_cleaned := gsub("1\\)", "1.0\\)", path_dx)]
+pathdiag[, dx_cleaned := gsub("2\\)", "2.0\\)", dx_cleaned)]
+pathdiag[, dx_cleaned := gsub("3\\)", "3.0\\)", dx_cleaned)]
+
+pathdiag[, dx1 := tstrsplit(dx_cleaned, split = " 2.0)", keep = 1)]
+pathdiag[, dx2 := tstrsplit(dx_cleaned, split = " 2.0)", keep = 2)]
+pathdiag[, dx2 := tstrsplit(dx2, split = " 3.0)", keep = 1)]
+pathdiag[, dx3 := tstrsplit(dx_cleaned, split = " 3.0)", keep = 2)]
+
+
+```
+
+
+```{r prep-long-data}
+## Subset to samples with some non-missing data
+nps.long.forprint0 <- nps.long[bfonum %in% ids.forana]
+
+## add protsample column
+nps.long.forprint1 <- merge(ids.sub[, .(ID, protsample)], nps.long.forprint0, by.x = "ID", by.y = "bfonum")
+
+```
+
+### Covariate distributions
+Here are the distributions for some of the covariates of interest for
+the `r length(ids.forana)` participants to be included in the analysis. 
+
+
+```{r hist-covars, fig.height=6}
+par(mfrow=c(2,2))
+
+
+##PlotCategorical("GENDER_DESC", phenos.ana[["demographics"]]); title("from demographics table", line=0.5)
+PlotCategorical("msex", ids.sub, xsrt=0)
+PlotCategorical("clinical_dx", forprint1, xsrt = 45); title("at last visit", line = 0.5)
+PlotContinuous("age_death", ids.sub)
+PlotContinuous("pmi", ids.sub)
+
+```
+
+These people generally died at older ages than the other cohorts. 
+There is one person that died before age 40. 
+
+
+### Gather dementia severity and pathology severity variables for
+### comparing to other cohorts
+
+```{r }
+
+## Not going to print these, but have a look at CIRS longitudinal variables
+cirs <- copy(phenos$nps_cirs)
+setnames(cirs, names(cirs), sapply(names(cirs), function(x) { gsub(" ", "_", x) }))
+
+## Gather variables to include in patho table
+formerge <- list(phenos$demog2[, .(bfonum, path_dx)],
+                 phenos$demog1[, .(bfonum, REGageAtOnset, REGpathDx)])
+
+patho_merged <- Reduce(function(x, y) { merge(x, y, by = "bfonum", all = TRUE) }, formerge)
+
+## Use both pathdx columns to get complete data
+## I already checked that when both columns have values, the values are the same
+## But I see that each column has different missing entries
+patho_merged[, path_dx_merged := path_dx]
+patho_merged[is.na(path_dx), path_dx_merged := REGpathDx]
+patho_merged[, c("path_dx", "REGpathDx") := NULL]
+
+
+```
+
+
+### Conclusions / To Do 
+
+ * Of the `r nrow(ids)` participants in the proteomics dataset from this cohort,
+ we'll keep `r length(ids.forana)` for analysis.
+ * I have the data dictionary for clinical and neuropathology
+   diagnosis, but not other variables. Would be nice to have the data
+   dictionaries, but it's probably okay since the NPS variables are
+   familiar and the other variables I could guess.
+ * To Do: Do we want to filter or adjust for time between last NPS
+   visit and death? 
+ * To Do: Do we want to filter on age at death? 
+ * To Do: Are there any other covariates that we want to keep? 
+ 
+ 
+ 
+
+```{r finish}
+## Write cleaned phenos to file 
+write.table(forprint1, out.cleanedphenos, row.names = FALSE, quote = FALSE, sep = "\t")
+
+
+## Write longitudinal observations to file
+write.table(nps.long.forprint1, out.long, row.names = FALSE, quote = FALSE, sep = "\t")
+
+
+## write patho / dementia variables to file
+write.table(patho_merged, file = out.patho, row.names = FALSE, quote = FALSE, sep = "\t")
+
+## write filtered and cleaned patho dx to file
+write.table(pathdiag, file = out.patho_filtered_cleaned, row.names = FALSE, quote = FALSE, sep = "\t")
+
+```
+
+

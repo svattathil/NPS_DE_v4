@@ -1,0 +1,247 @@
+---
+title: "detect outliers in proteomics data"
+author: "Selina Vattathil"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r global-options-1, include=FALSE}
+rm(list=ls())
+library(knitr)
+library(data.table)
+library(ggplot2)
+library(ggrepel)
+options(stringsAsFactors = FALSE)
+source("~/comsv/Svattathil_Library/svattathil_functions.r")
+```
+
+```{r global-chunk-settings-1, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=TRUE, message=TRUE, include=TRUE, collapse=TRUE)
+```
+
+```{r word-document-settings-1, include=FALSE, eval=TRUE}
+knitr::opts_chunk$set(fig.width=6, fig.height=6)
+```
+
+```{r html-document-settings-1, include=FALSE, eval=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8)
+```
+
+```{r functions, include=FALSE}
+## function to use , thousands separator for numbers in kable
+Mkable <- function(x, ...) { kable(x, format.args = list(big.mark = ','), ...) }
+
+RunPCA <- function(pca_data, sdthresh=4) {
+    ## pca_data is a data.table with the data (no protein column, just the data columns)
+    pcaObj = prcomp(t(pca_data), scale = T)
+
+    #eigs <- pcaObj$sdev^2
+    #eigs/ sum(eigs)
+
+    pcpoints = data.frame(pcaObj$x)[,1:2]
+    pcpoints$sample=rownames(pcpoints)
+    setDT(pcpoints)
+    #pcpoints=merge(pcpoints, phenos, all.x = TRUE, by="sample")
+
+
+    ### Define the limits outside of which a sample will be considered an outlier
+    buffer.pc1 <- sdthresh*sd(pcpoints$PC1)
+    buffer.pc2 <- sdthresh*sd(pcpoints$PC2)
+
+    keeplims.pc1 <- c(mean(pcpoints$PC1) - buffer.pc1, mean(pcpoints$PC1) + buffer.pc1)
+    keeplims.pc2 <- c(mean(pcpoints$PC2) - buffer.pc2, mean(pcpoints$PC2) + buffer.pc2)
+    
+
+    ### Initialize columns with NAs
+    pcpoints[, c("pc1_outlier", "pc2_outlier", "outlier") := NA_character_]
+
+    ### Fill in sample names for outliers 
+    pcpoints[(PC1 > keeplims.pc1[2]) | (PC1 < keeplims.pc1[1]), pc1_outlier := sample]
+    pcpoints[(PC2 > keeplims.pc2[2]) | (PC2 < keeplims.pc2[1]), pc2_outlier := sample]
+    pcpoints[(!is.na(pc1_outlier) | !is.na(pc2_outlier)), outlier := sample]
+    
+    return(pcpoints)
+}
+```
+
+
+```{r constants}
+regressvars <- c("Batch")
+sdthreshold <- 5
+```
+
+```{r define-input}
+outdir <- "2_Pipeline/01-Explore_data/"
+file.ids <- paste0(outdir, "ids_semi-filtered.txt")
+file.log2norm <- paste0(outdir, "prot_before_sample_outlier_removal_log2norm.txt")
+file.resid <- paste0(outdir, "prot_before_sample_outlier_removal_resid_regress", paste0(regressvars), ".txt")
+
+```
+
+```{r define-output}
+out.ids.filtered <- paste0(outdir, "ids_pcafiltered.txt")
+out.log2norm.pcafiltered <- paste0(outdir, "prot.pcafiltered.log2norm.txt")
+```
+
+
+```{r read-data}
+resid <- fread(file.resid)
+ids <- fread(file.ids)
+log2norm <- fread(file.log2norm)
+```
+
+```{r prepare-data-1}
+
+
+
+```
+## Goal 
+Identify outlier samples in the proteomics data using principal
+component analysis. 
+
+
+## Data and Methods
+Run the PCA on residuals after regressing out these variables from the
+log2 of the normalized abundance profiles: 
+`r paste(regressvars, sep=",")`  
+
+Use only the proteins with complete data. 
+Define outliers as samples that are more than `r sdthreshold` standard
+deviations from the mean for PC1 or PC2. 
+We'll iteratively remove outliers and run PCA until no outliers
+remain. 
+
+## Results
+
+### Run PCA
+```{r do-pca}
+### set up for iterative PCA
+pcpoints <- vector(mode="list")
+pcplots1 <- vector(mode="list")
+people_to_drop <- NULL
+outlier_count <- -1
+pcaround <- 0
+
+### Extract complete data, because that's what PCA requires
+forpca <- resid[, !c("protein")]
+forpca <- forpca[complete.cases(forpca), ]
+
+
+### do iterative PCA
+while(length(people_to_drop) > outlier_count) {
+    ### calculate PCA and identify outlier samples and append to list
+    pcaround <- pcaround + 1
+    outlier_count <- length(people_to_drop) ## number of outliers found before this round
+    pcpoints[[pcaround]] <- RunPCA(forpca[, setdiff(colnames(forpca), people_to_drop), with = FALSE ], sdthreshold)
+    
+    ## samples that are not outliers have value NA in the PCA object's "outlier" column
+    people_to_drop <- c(people_to_drop, as.character(na.omit(pcpoints[[pcaround]]$outlier)))
+
+    ### plot first two PCs
+    forplot <- pcpoints[[pcaround]] ## for convenience
+    
+    pcplots1[[pcaround]] <- ggplot(data = forplot, aes(x = PC1, y = PC2)) +
+        geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +  # Vertical line at x = 0
+        geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +   # Horizontal line at y = 0
+        geom_point(color="darkolivegreen") +
+        geom_text_repel(aes(label = outlier), color = "red", na.rm = TRUE) +
+        theme_bw() +
+        ggtitle(paste0("iterative PCA for outlier removal - round ", pcaround)) +
+        theme(legend.position="bottom")
+}
+```
+The PCA was done using the `r pN(nrow(forpca))` proteins with complete
+data for the 
+`r ncol(forpca)` samples. 
+
+
+Here are the plots from each round of PCA. The outliers, if any, are
+labeled in red. 
+
+```{r plot-pca}
+for(i in 1:length(pcpoints)) {
+    print(pcplots1[[i]])
+}
+rm(i)
+
+```
+
+After `r pcaround` rounds of PCA we found `r length(people_to_drop)`
+outliers.   
+
+
+
+### Check for clustering by covariates
+Here are PCA plots colored by some potential influential covariates. 
+
+```{r color-plot, fig.width=7}
+### Color by covariates of interest
+## Use last set of PCs
+forplot <- merge(ids, pcpoints[[length(pcpoints)]], by.x = "protsample", by.y = "sample")
+
+
+### Add additional labels
+## Add column indicating batch groupings (groupings selected by looking at PCA results before regressing batch)
+forplot[, batchgroup := "batch1-12"]
+forplot[Batch %in% 16:21, batchgroup := "batch16-21 (6 batches)"]
+forplot[Batch %in% c(13:15, 22:23), batchgroup := "batch13-15,22-23 (5 batches)"]
+
+ggplot(data = forplot, aes(x = PC1, y = PC2, color = factor(msex))) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +  # Vertical line at x = 0
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +   # Horizontal line at y = 0
+    geom_point() +
+    theme_bw() +
+    ggtitle("Check clustering by sex") +
+    theme(legend.position="bottom")
+
+ggplot(data = forplot, aes(x = PC1, y = PC2, color = factor(source), shape = factor(source))) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +  # Vertical line at x = 0
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +   # Horizontal line at y = 0
+    geom_point() +
+    theme_bw() +
+    ggtitle("Check clustering by source") +
+    theme(legend.position="bottom")
+
+ggplot(data = forplot, aes(x = PC1, y = PC2, color = factor(batchgroup), shape = factor(batchgroup))) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +  # Vertical line at x = 0
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +   # Horizontal line at y = 0
+    geom_point() +
+    theme_bw() +
+    ggtitle("Check clustering by batch group") +
+    theme(legend.position="bottom")
+
+ggplot(data = forplot, aes(x = PC1, y = PC2, color = factor(Batch))) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +  # Vertical line at x = 0
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +   # Horizontal line at y = 0
+    geom_point() +
+    theme_bw() +
+    ggtitle("Check clustering by batch") +
+    theme(legend.position="bottom")
+
+```
+
+
+```{r filter-log2norm}
+### Make new log2norm object with outlier samples removed
+log2norm.filtered <- log2norm[, setdiff(colnames(log2norm), people_to_drop), with = FALSE]
+
+```
+
+```{r finish}
+### Make new ids object with outlier samples removed
+ids.forprint <- ids[protsample %in% names(log2norm.filtered), ]
+
+write.table(ids.forprint, file = out.ids.filtered, row.names = FALSE, quote = FALSE, sep = "\t")
+write.table(log2norm.filtered, file = out.log2norm.pcafiltered, row.names = FALSE, quote = FALSE, sep = "\t")
+```
+
+
+
+## Conclusion / To Do
+
+ * `r length(people_to_drop)` samples were identified as outliers,
+   leaving `r ncol(log2norm.filtered)-1` samples for analysis.
+ * Even though we regressed out batch, there does still seem to be some
+   effect of batch, which also corresponds to cohort. I guess the SVAs
+   will account for some of this? 
+   

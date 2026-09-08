@@ -1,0 +1,422 @@
+---
+title: "Explore proteomics data"
+author: "Selina Vattathil"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r global-options-1, include=FALSE}
+rm(list=ls())
+library(knitr)
+library(data.table)
+#library(gplots)
+library(pheatmap)
+library(ggplot2)
+options(stringsAsFactors = FALSE)
+source("~/comsv/Svattathil_Library/svattathil_functions.r")
+```
+
+```{r global-chunk-settings-1, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=TRUE, message=TRUE, include=TRUE, collapse=TRUE)
+```
+
+```{r word-document-settings-1, include=FALSE, eval=TRUE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4)
+```
+
+```{r html-document-settings-1, include=FALSE, eval=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8)
+```
+
+```{r functions, include=FALSE}
+## function to use , thousands separator for numbers in kable
+Mkable <- function(x, ...) { kable(x, format.args = list(big.mark = ','), ...) }
+```
+
+```{r constants}
+ids.bad.from.kate <- matrix(c("sample mixture", "E12-06",
+                              "inbred", "E13-10",
+                              "inbred", "29832086",
+                              "bad experiment", "1907"), byrow=TRUE, ncol=2)
+
+ids.dups.from.kate <- matrix(c("1993", "1991",
+                               "2563", "2363"), byrow=TRUE, ncol=2)
+                          
+```
+
+
+```{r define-input}
+### Files that exist
+filedir <- "0_Data/SharepointFiles/"
+file.prot <- paste0(filedir, "Proteomics/QC/protein_compiled_norm.csv")
+file.ids <- paste0(filedir, "Proteomics/QC/traits_assembled.csv")
+file.tampor <- paste0(filedir, "Proteomics/QC/3.Regressed.Batch_cleanDat-9284x389-WINGO_BRAIN-TAMPOR+BatchPMIRegression.csv")
+```
+
+
+```{r define-output}
+### Files to be created
+outdir <- "2_Pipeline/01-Explore_data/"
+MyMkdir(outdir)
+out.ids.filtered <- paste0(outdir, "ids_semi-filtered.txt")
+out.heatmap <- paste0(outdir, "sample_heatmap.png")
+out.log2norm <- paste0(outdir, "prot_before_sample_outlier_removal_log2norm.txt")
+```
+
+
+```{r read-data}
+### Read in data
+prot <- fread(file.prot)
+ids0 <- fread(file.ids)
+tampor <- fread(file.tampor)
+```
+
+
+```{r prepare-data-1}
+## The prot table has first column for protein names and remaining columns for samples
+
+## Update column names
+setnames(ids0, "V1", "protsample")
+
+
+## Remove redundant column
+ids0[, ID := NULL]
+
+## set batch as factor
+ids0[, Batch := factor(Batch, sort(unique(Batch)))]
+
+```
+
+## Goal
+The goal is to explore the proteomics data with regard to data missingness
+and batch effects. 
+
+## Data
+The data file is located in Sharepoint in this directory:  
+
+Common - Dry Lab > Data_brain proteomics_NPS > QC
+
+The data is in file protein_compiled_norm.csv, and the cohort and a
+few other covariates are in file traits_assembled.csv. 
+
+
+
+## Results
+```{r check-orig-counts, include = FALSE}
+## Number of samples
+ncol(prot) -1
+
+## Number of proteins
+nrow(prot)
+
+## Check how many people from ids are in prot table
+table(ids0$protsample %in% colnames(prot), useNA = "ifany")
+
+## Extract ids for samples in prot table
+ids.incgis <- copy(ids0[protsample %in% colnames(prot), ])
+n.gis <- nrow(ids.incgis[WorkingID == "GIS", ])
+
+## Check how many samples are GIS
+ids <- ids.incgis[WorkingID != "GIS", ]
+
+## Select study samples (i.e. exclude GIS)
+prot.study <- prot[, c("V1", ids$protsample), with = FALSE]
+n.study  <- nrow(ids) ## number of study samples
+
+## Check whether protein has complete NAs
+all.missing <- table(apply(prot.study[, !c("V1")], 1, function(x) {all(is.na(x) | x == 0)}))
+```
+The data file has one column with protein names and remaining columns
+for samples. 
+
+There are `r pN(nrow(prot))` proteins in the data file, but some have
+complete NAs so there are really `r pN(all.missing["FALSE"])` proteins to work with. We'll be filtering these
+down later.   
+
+There are `r ncol(prot) -1` samples in the data file. These include 
+`r n.gis` GIS samples and `r nrow(ids)` study samples. 
+
+
+Here is the count of samples from each cohort: 
+
+```{r table-sources}
+## Check how many samples from each source/cohort
+Mkable(rbind(sort(table(ids$source, useNA = "ifany"), decreasing=TRUE)))
+cohorts <- unique(ids$source)
+```
+
+
+There are `r length(unique(ids$Batch))` batches. Here is a breakdown
+of the samples by batch and source/cohort. 
+
+```{r table-batches}
+## Count batches and tabulate number of samples in each batch
+#length(unique(ids$batch))
+kable(table(ids[, .(Batch, source)]), row.names=TRUE, caption = "Samples per batch and source.")
+
+```
+
+### Filtering
+#### Filter proteins by minimum sample count
+There are both NAs and 0 values in the data. 
+Out of curiosity, I visualized the zeros and NAs by protein and
+sample. 
+
+
+
+```{r make-visual-matrix-zeros-NAs}
+### Visualize 0s and NAs
+## Convert to matrix
+mat <- as.matrix(prot.study[, -c("V1")])
+
+## Create a categorical matrix to classify cells
+## Define colors
+visual_matrix <- ifelse(is.na(mat), 1, ifelse(mat == 0, 2, 3))
+colors <- c("blue", "red", "white")  # Blue for NA, Red for 0, White for other values
+```
+
+```{r visualize-zeros-NAs, fig.width=7, fig.height=7, eval=FALSE}
+## Draw heatmap with clustering
+p1 <- pheatmap(
+  visual_matrix,                               # Matrix to be visualized
+  cluster_rows = TRUE,                         # Cluster rows
+  cluster_cols = TRUE,                         # Cluster columns
+  color = colors,                              # Custom colors for 1, 2, 3
+  annotation_legend = TRUE,                     # Show legend
+  main = "Visualization of 0s and NAs",  # Title
+  legend = TRUE,                               # Display the legend
+  show_rownames = FALSE,                        # Show row names (proteins)
+  show_colnames = TRUE,                        # Show column names (samples)
+  labels_row = prot.study$V1,                  # Label proteins
+  labels_col = sapply(colnames(mat), substring, 7, 9),  ## label samples only with batch (extract from sample name) 
+  fontsize_row = 8,                            # Adjust row label size
+  fontsize_col = 5,                            # Adjust column label size
+  legend_labels = c("NA", "Zero", "Other"),    # Legend labels
+  legend_breaks = c(1:3), 
+  )
+
+p1
+```
+
+```{r draw-plot-png, eval=FALSE}
+png(file = out.heatmap, width = 20, height = 7, res = 300, units = "in")
+p1
+dev.off()
+
+```
+
+The samples apparently cluster by batch. There are a few proteins with
+lots of zeros. There is a set of six batches (leftmost chunk of plot)
+with more zeros and NAs than the rest of the samples. 
+
+
+### Determine number of proteins meeting range of missingness thresholds
+For analysis, convert the 0s to NAs. Then for each protein, count the number of samples with non-NA
+observation. We can then apply minimum non-missing thresholds
+considering the entire sample set, or within
+each cohort separately. The latter is worth considering since we plan
+to do the analysis in each cohort separately.  
+
+```{r count-nonmissing}
+### Convert 0s to NA
+prot.study[, names(prot.study) := lapply(.SD, function(x) { x[x==0] <- NA_integer_; x })]
+
+
+### For each protein, counts the number of samples with non-missing data in each cohort and in total
+counts.nonmissing <- data.frame(sapply(unique(ids$source), function(asource) {
+    dat <- prot.study[, ids[source == asource, protsample], with = FALSE]
+    return(apply(dat, 1, function(x) { sum(!is.na(x)) }))
+}))
+setDT(counts.nonmissing)
+counts.nonmissing[, protein := prot.study$V1]
+counts.nonmissing[, wholeset := sum(OHSU, Rush, Emory), by = "protein"]
+setcolorder(counts.nonmissing, "protein")
+
+
+### Determine number of proteins with non-missing data for at least the specified number
+### of samples, in each sample set
+thresholds <- c(1, 10, 20, 30, 50, 100, 200, 300, n.study)
+sets <- setdiff(colnames(counts.nonmissing), "protein")
+
+nproteins.meeting.thresholds <- data.frame(sapply(sets, function(aset) {
+    sapply(thresholds, function(x) { sum(counts.nonmissing[, get(aset)] >= x) })
+}))
+
+
+## Add column giving the threshold
+nproteins.meeting.thresholds <- data.table(sample.threshold = thresholds, nproteins.meeting.thresholds)
+
+
+## Add column giving number of proteins meeting threshold in every cohort
+Countfunc <- function(athresh) { sum(apply(counts.nonmissing[, cohorts, with = FALSE], 1, function(x) {all(x > athresh)})) }
+nproteins.meeting.thresholds[, each.cohort := sapply(thresholds, Countfunc)]
+
+## Get number of proteins with complete data, just for our records
+n.proteins.complete.data <- nproteins.meeting.thresholds[sample.threshold == n.study, wholeset]
+```
+As a reminder, the number of available proteins is `r pN(all.missing["FALSE"])`, 
+and the sample sizes for each cohort are: 
+`r Mkable(rbind(sort(table(ids$source, useNA = "ifany"), decreasing=TRUE)))`
+				   
+				   
+There are `r pN(n.proteins.complete.data)`
+proteins with non-missing data for all `r n.study` samples, but that's a
+very stringent threshold. We'll relax the non-missing threshold to
+keep more proteins. 
+
+Here are the number of proteins that meet a range of minimum sample thresholds. 
+
+
+```{r table-protein-keep}
+### Draw table of proteins to keep at range of sample thresholds
+Mkable(nproteins.meeting.thresholds, caption="number of proteins that would be kept by applying the specified minimum sample threshold to a specific cohort or to the entire sample set")
+```
+
+The number of proteins we keep differs in each cohort because the
+cohorts have different sample sizes and because the missingness varies by batch and batches are correlated with
+cohort. 
+
+
+```{r define sample threshold}
+### Define minimum sample threshold
+sampthresh <- 50
+```
+
+
+We're going to keep the 
+`r pN(nproteins.meeting.thresholds[sample.threshold == sampthresh, wholeset])` proteins with non-missing observations
+for at least `r sampthresh` samples. We'll do PCA to look for sample
+outliers. 
+
+First, prepare normalized data by taking log2 of the normalized counts. 
+```{r get-log2norm}
+### Make vector of proteins to keep and filter data to these proteins
+proteins.passed.minn <- counts.nonmissing[wholeset >= sampthresh, protein]
+prot.study.minn <- prot.study[V1 %in% proteins.passed.minn, ]
+
+### Extract norm counts to a matrix
+### divide each column by column sum to get 
+norm0 <- as.matrix(prot.study.minn[, -c("V1")])
+norm <- apply(norm0, 2, function(x) { x/sum(x, na.rm=TRUE) })
+rownames(norm) <- prot.study.minn$V1
+
+### Take log2 of normalized values
+log2norm <- log2(norm)
+
+```
+
+#### Check for duplicate samples
+In Kate's QC using the genotype data, she identified two pairs of
+duplicate samples. They may or may not be duplicates in this
+proteomics data. To check on these pairs, I first calculated the pairwise
+Pearson correlation for each pair of samples. Then for each member of
+the pair, I calculated the ECDF of the observed correlations with the
+other samples. Then I checked the percentile of the observed
+correlation between the possible duplicates. 
+
+```{r check-dups}
+## Calculate pairwise correlations
+cor_matrix <- cor(log2norm, use = "pairwise.complete.obs", method = "pearson")
+
+## Get the sample names and sample indices for pair 1
+pair1.names<- ids[ID %in% ids.dups.from.kate[1,], protsample]
+pair1.x <- which(rownames(cor_matrix) %in% pair1.names)
+
+## Calculate empirical distribution function usign observed correlations with each sample of interest
+## Excluded the correlations for the sample itself and the potential duplicate
+## Then check whether the correlation between the potential duplicates falls in the empirical distribution
+Ecdf1a <- ecdf(cor_matrix[pair1.x[1], -c(pair1.x)])
+Ecdf1b <- ecdf(cor_matrix[pair1.x[2], -c(pair1.x)])
+cor_matrix[pair1.x[1], pair1.x[2]]
+Ecdf1a(cor_matrix[pair1.x[1], pair1.x[2]])
+Ecdf1b(cor_matrix[pair1.x[1], pair1.x[2]])
+
+
+## Get the sample names and sample indices for pair 2
+pair2.names<- ids[ID %in% ids.dups.from.kate[2,], protsample]
+pair2.x <- which(rownames(cor_matrix) %in% pair2.names)
+
+## Calculate empirical distribution function usign observed correlations with each sample of interest
+## Excluded the correlations for the sample itself and the potential duplicate
+## Then check whether the correlation between the potential duplicates falls in the empirical distribution
+Ecdf2a <- ecdf(cor_matrix[pair2.x[1], -c(pair2.x)])
+Ecdf2b <- ecdf(cor_matrix[pair2.x[2], -c(pair2.x)])
+cor_matrix[pair2.x[1], pair2.x[2]]
+Ecdf2a(cor_matrix[pair2.x[1], pair2.x[2]])
+Ecdf2b(cor_matrix[pair2.x[1], pair2.x[2]])
+
+
+```
+The correlation is pretty high for all the samples. The potential
+duplicate pairs did not especially high correlations, so I'm just
+going to leave them. 
+
+
+#### Check on batch effects using PCA
+Perform PCA on the log2 values to check for clustering by batch. We
+know the missingness varies by batch, but for the PCA we'll use only
+the `r pN(n.proteins.complete.data)` proteins with complete data for all samples. 
+
+
+```{r pca, fig.height=5}
+### Extract complete cases for PCA
+pca_data <- log2norm[complete.cases(log2norm), ]
+
+### Calculate PCs
+pcaObj <-  prcomp(t(pca_data), scale = TRUE)
+
+### Extract PC1 and PC2
+## Add sample IDs and batch 
+pcpoints <- data.frame(pcaObj$x)[,1:2]
+pcpoints$protsample <- rownames(pcpoints)
+setDT(pcpoints)
+pcpoints <- merge(pcpoints, ids[, .(protsample, Batch)], by = "protsample")
+
+### Add additional labels
+## Add column indicating batch groupings (groupings selected by looking at PCA results)
+pcpoints[, batchgroup := "batch1-12"]
+pcpoints[Batch %in% 16:21, batchgroup := "batch16-21 (6 batches)"]
+pcpoints[Batch %in% c(13:15, 22:23), batchgroup := "batch13-15,22-23 (5 batches)"]
+
+## Add column indicating whether sample was excluded from tampor results
+pcpoints[, tamporfail := FALSE]
+pcpoints[protsample %in% setdiff(pcpoints$protsample, names(tampor)), tamporfail := TRUE]
+
+### Visualize PCs
+ggplot(pcpoints, aes(x=PC1, y=PC2, color=Batch, shape = batchgroup)) +
+    geom_point() + 
+    geom_point(data=subset(pcpoints, tamporfail == TRUE),
+               aes(x=PC1, y=PC2), shape = "*", size=7, color="black") +
+    ggtitle(paste(nrow(pcpoints), " samples")) +
+    theme_minimal() 
+
+```
+
+
+The samples form three clusters that each contain from five to twelve
+batches. 
+
+The Levey group excluded two samples in their post-tampor
+dataset. To define outliers, they used WGCNA and picked the samples
+with bicor distance sample network connectivity more than three
+standard deviations from the mean. 
+Their two outliers are both in batch 13 and marked with black asterisks in
+the plot.  
+
+
+										   
+```{r finish}
+
+## Add protein column 
+log2norm.forprint <- data.table(protein=rownames(log2norm), log2norm)
+
+write.table(ids, file = out.ids.filtered, row.names = FALSE, quote = FALSE, sep = "\t")
+fwrite(log2norm.forprint, file = out.log2norm, row.names = FALSE, quote = FALSE, sep = "\t")
+
+```
+
+
+### Conclusions / To Do 
+ * What abundance thresholds do we want to use to define which
+   proteins to keep?
+ 

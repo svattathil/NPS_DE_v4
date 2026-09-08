@@ -1,0 +1,573 @@
+---
+title: "Extract phenotypes for NPS DE - Rush"
+author: "Selina Vattathil"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r  global-options-1, include=FALSE}
+rm(list=ls())
+library(knitr)
+library(knitr)
+library(data.table)
+#library(ggplot2)
+options(stringsAsFactors = FALSE)
+source("~/comsv/Svattathil_Library/svattathil_functions.r")
+```
+
+
+```{r global-chunk-settings-1, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=TRUE, message=TRUE, include=TRUE, collapse=TRUE)
+```
+
+```{r word-document-settings-1, include=FALSE, eval=TRUE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4)
+```
+
+```{r html-document-settings-1, include=FALSE, eval=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8)
+```
+
+```{r functions, include=FALSE}
+## function to use , thousands separator for numbers in kable
+Mkable <- function(x, ...) { kable(x, format.args = list(big.mark = ','), ...) }
+
+```
+
+```{r constants}
+sourceset <- "Rush"
+
+```
+
+
+```{r define-input}
+### Files that exist
+file.ids <- "2_Pipeline/01-Explore_data/ids_pcafiltered.txt"
+
+filedir <- "0_Data/SharepointFiles/"
+
+phesets <- c("rad201_v1", "rad201_v2", "rad20x", "radintr", "Wingo_Data")
+phesets.nps <- setdiff(phesets, "Wingo_Data")
+files.phenos <-paste0(filedir, "Phenotypes/Rush/", phesets, ".txt")
+```
+
+
+```{r define-output}
+### Files to be created
+outdir <- "2_Pipeline/01-Explore_data/"
+Out.vars <- function(varset) { paste0(outdir, "rush_vars_", varset, ".txt")  }
+out.patho <- paste0(outdir, "patho_", tolower(sourceset), ".txt")
+```
+
+
+```{r read-data}
+### Read in data
+ids.all <- fread(file.ids)
+phenos <- lapply(files.phenos, fread)
+names(phenos)  <- phesets
+```
+
+```{r prepare-data-1}
+
+### Prepare data
+## Extract ids for this source
+ids <- ids.all[source=="Rush", ]
+
+ids[, ID := as.integer(ID)]
+```
+
+## Goal
+The goal is to extract the NPS and other variables of interest for the
+`r nrow(ids)` `r sourceset` participants in the proteomics dataset. 
+
+## Data
+#### Phenotypes
+Sharepoint directory: 
+
+Common - Dry Lab > Grant_RO1_NPS_in_AD > 1_Phenotypes_Frozen tissue >
+Rush > Phenotypes_02222023
+
+
+Single timepoint: 
+
+ * rad201_v1
+ * rad201_v2
+ * Wingo_Data
+ 
+ Wingo_Data has pathology data, and the other two have NPS. 
+ 
+Longitudinal: 
+
+ * rad20x
+ * radintr
+ 
+ These both have NPS. 
+ 
+From notes from Greg Klein: rad201 and rad20x were collected via paper
+forms, and radintr is newer data after transitioning to a computer
+system. 
+
+
+I found a report that Jiaqi made in March 2023. This has useful links
+to files and maps variable names to NPS symptoms. 
+
+#### Proteomics samples
+The proteomics samples are identified by projid (numeric identifiers six to
+eight digits in length).  
+
+
+## Results
+### Dimensions of complete phenotype files
+
+```{r }
+Mkable(rbind(n.rows = sapply(phenos, nrow), 
+      n.unique.GUIDs = sapply(phenos, function(x) { length(unique(x$projid))})))
+
+```
+
+### Dimensions after filtering to participants in proteomics datasets
+Now I filtered to rows for the `r length(unique(ids$GUID))` GUIDs in
+the proteomics ID file. 
+
+```{r extract_data}
+### Extract data for participants of interest
+## Here we'll keep all the available columns
+phenos.ana <- sapply(phenos, function(x) { x[projid %in% ids$ID, ] }, simplify = FALSE)
+
+## Check row and participant counts again
+Mkable(rbind(n.rows = sapply(phenos.ana, nrow), 
+            n.unique.GUIDs = sapply(phenos.ana, function(x) { length(unique(x$projid))})))
+
+
+## How many participants of interest are represented in at least one of the NPS tables?
+has.nps <- unique(c(sapply(setdiff(phesets, "Wingo_Data"), function(x) { phenos[[x]]$projid } )))
+
+#length(ids$ID %in% has.nps)
+
+```
+Of the `r nrow(ids)` participants with proteomics data, `r length(ids$ID %in% has.nps)` are represented in at
+least one of the NPS tables. 
+
+
+### Check cognitive diagnosis
+
+
+```{r }
+Mkable(rbind(addmargins(table(phenos.ana[["Wingo_Data"]]$cogdx, useNA = "ifany"))))
+if(all(phenos.ana[["Wingo_Data"]]$cogdx >=2)) {
+    msg <- "All of the participants had final cognitive diagnosis of MCI, AD, or other dementia."
+} else{
+    msg <- "Check the final cognitive diagnosis. Not all participants had final cognitive diagnosis of MCI, AD, or dementia."
+}
+```
+
+`r msg`
+
+`r rm(msg)`
+
+
+### Check sex
+```{r check-sex}
+sex.from.phenos <- phenos.ana[["Wingo_Data"]][, .(projid, msex)]
+setnames(sex.from.phenos, "msex", "msex.fromphenos")
+
+checksex <- merge(ids[, .(ID, msex)], sex.from.phenos, by.x="ID", by.y="projid")
+
+if(all(checksex[, msex == msex.fromphenos])) {
+  msg <- "The sex matches between the phenotype data and the proteomics data for all participants."
+} else {
+  msg <- "Check the sex. There is at least one mismatch between the sex in the phenotype data and the sex in the proteomics data."
+}
+
+```
+
+`r msg`
+
+`r rm(msg)`
+
+
+
+### Check race
+race -- 'With which group do you most closely identify yourself?' -->
+value '1' indicates 'White'
+
+spanish-- 'Are you of Spanish/Hispanic/Latino origin?' --> 
+value '2' indicates 'No'
+
+```{r check-race}
+par(mfrow=c(1,2))
+PlotCategorical("race", phenos.ana[["Wingo_Data"]])
+PlotCategorical("spanish", phenos.ana[["Wingo_Data"]])
+```
+
+
+### Extracting NPS variables
+
+#### rad201v1 and rad201v2 datasets
+
+```{r define-201-vars}
+vars201 <- data.frame(matrix(
+    c(
+        "depression",    "H1SADDAY",
+        "anxiety",       "H5ANXOUS",
+        "apathy",        "H14SITST",
+        "irritability",  "LOSETEMP",
+        "delusion",      "SAIDSTOL",
+        "hallucination", "MISPROBJ",
+        "sleep1",        "H12MIDDL",
+        "sleep2",        "H13EARLY"), 
+     byrow = TRUE, ncol=2)
+)
+names(vars201) <- c("nps", "var")
+vars201$var <- tolower(vars201$var)
+setDT(vars201)
+
+```
+
+
+```{r }
+## Extract NPS from dataset 1 (201v1)0
+phenos.extracted1  <- phenos.ana[[1]][, c("projid", "age_int", vars201$var), with = FALSE]
+phenos.extracted1[, set := "201v1"]
+
+
+phenos.extracted2 <- phenos.ana[[2]][, c("projid", "age_int", vars201$var), with = FALSE]
+phenos.extracted2[, set := "201v2"]
+
+extracted201 <- rbind(phenos.extracted1, phenos.extracted2)
+setnames(extracted201, vars201$var, vars201$nps)
+setorder(extracted201, projid)
+
+#length(unique(extracted201$projid))
+
+```
+
+The 201v1 and 201v2 datasets have almost all the same variables (v1
+has one extra, h6sympts). But they use different coding (no/yes/NA is
+0/1/9 in v1 and 2/1/8or9 in v2). 
+
+
+A total of
+`r  length(unique(extracted201$projid))` unique participants are
+represented in these tables. There are 
+`r length(intersect(phenos.ana[[1]]$projid, phenos.ana[[2]]$projid))`
+participants present in both tables. 
+
+In Jiaqi's report she picked one item for each NPS to tabulate case
+counts, but I see in the notes that that was a quick strategy and the
+plan was to revise the NPS definitions later. Looking at the codebook,
+it does seem like there might be one or a few items per NPS that we
+can use to make a case/control designation. 
+
+Here is the mapping of variable to NPS from
+Jiaqi's code: 
+
+```{r }
+kable(vars201)
+
+```
+
+The missing rates for these variables are pretty low. 
+
+
+Here is a look at the difference between age at death (from the
+proteomics file) and the age at the NPS observation. 
+```{r compare-age, include = FALSE}
+### Compare age at death from proteomics id file to age at death from the phenos file
+age.death <- merge(phenos[[5]][, .(projid, age_death, pmi)], ids[, .(ID, age_death)],
+                   by.x = "projid", by.y = "ID", suffixes = c(".id", ".phe"))
+age.message <- ifelse(all((age.death[, age_death.id - age_death.phe]) == 0), 
+     "The age at death matches between the proteomics ID file and the phenotype file for all samples.", 
+     "There are discrepancies between age at death in the proteomics ID file and the phenotype file.")
+
+
+### Check age at NPS observation versus age at death
+ids[, ID := as.numeric(ID)]
+merged <- merge(extracted201, ids[, .(ID, age_death, msex)], by.x = "projid", by.y = "ID")
+
+hist(merged[, age_death - age_int], breaks = 40, col="skyblue2", main = "number of years between NPS observation and death", xlab = "years")
+rm(merged)
+
+
+```
+
+Note: `r age.message`
+
+#### rad20x dataset
+The variable labels in this dataset are different from the 201v1 and
+201v2 labels, but comparing the codebooks I see the questions are the
+same or at least overlapping so I could try to line up the variables
+with the 201 datasets. 
+
+The variable labels in this dataset use keywords, so I can more easily count
+the number of variables per NPS. Here are the keywords that Jiaqi
+used, and the number of variables per NPS. 
+
+```{r }
+keywords <- c(depression = "depress",
+              anxiety = "upset",
+              apathy = "apathy",
+              irritability = "temper",
+              delusion = "trust",
+              halluciantion = "delusi",
+              sleep5 = "sleep5",
+              sleep8 = "sleep8")
+
+x20vars <- sapply(keywords, function(akeyword) { grep(akeyword, names(phenos[[3]]), value = TRUE)  }, simplify = FALSE)
+
+varcounts <- data.table(cbind(nps = names(keywords), keyword = keywords, varcount = sapply(x20vars, length)))
+setorder(varcounts, nps)
+
+Mkable(varcounts, caption = "number of variables per NPS based on keywords")
+print("\n\n")
+```
+
+
+```{r extract-20x}
+### Extract the variables of interest for participants of interest
+extracted20x <- phenos.ana[[3]][, c("projid", "age_int", unlist(x20vars)), with = FALSE]
+
+
+### Check number of observations per participant
+obs.per.participant.20x <- as.vector(table(extracted20x$projid))
+
+Mkable(rbind(summary(obs.per.participant.20x)), caption = "Summary of number of visits per participant")
+```
+
+This dataset includes `r length(unique(extracted20x$projid))` participants. 
+There are up to `r max(obs.per.participant.20x)` visits per participant. 
+
+The data have good completeness (data not shown). 
+ 
+```{r }
+### Calculate non-missing rate per variable
+## non-missing values take values 1-5 (yes/no or indicating duration or frequency range)
+nonmissing <- data.table(cbind(variable = setdiff(names(extracted20x), c("projid", "age_int")),
+                               nonmissing.rate = round(apply(extracted20x[, -c("projid", "age_int")], 2, function(x) {
+                                   sum(x %in% c(1:5) )})/nrow(extracted20x), 2)))
+
+#kable(nonmissing)
+
+```
+
+```{r }
+selectvars20x <- c(depression = "depress",
+              anxiety = "upset",
+              apathy = "apathy1",
+              irritability = "temper1",
+              delusion = "trust1",
+              halluciantion = "delusi1",
+              sleep = "sleep5")        
+```
+
+```{r check-visit-ages-rad20x, include=FALSE}
+### Check age at NPS observation versus age at death
+merged <- merge(phenos.ana[["rad20x"]][, .(projid, age_int)], ids[, .(ID, age_death, msex)], by.x = "projid", by.y = "ID")
+
+hist(merged[, age_death - age_int], breaks = 40, col="skyblue2", main = "number of years between NPS observation and death", xlab = "years")
+rm(merged)
+```
+
+
+### radintr dataset
+This dataset uses yet a different variable label scheme, but again
+seems to use pretty much the same questions so the variables could be
+lined up with the other datasets. 
+
+```{r }
+selectvarsint <- c(depression = "semdn",
+              anxiety = "upset",
+              apathy = "sitst",
+              irritability = "temper",
+              delusion = "hsstl",
+              halluciantion = "msprc",
+              sleep2 = "wakup")
+
+```
+
+```{r }
+extractedint <- phenos[[4]][, c("projid", "age_int", selectvarsint), with = FALSE]
+
+
+### Check number of observations per participant
+obs.per.participant.int <- as.vector(table(extractedint$projid))
+
+Mkable(rbind(summary(obs.per.participant.int)), caption = "Summary of number of visits per participant")
+```
+
+This dataset includes `r length(unique(extractedint$projid))` participants. 
+There are up to `r max(obs.per.participant.int)` visits per participant. 
+
+
+```{r check-visit-ages-radint, include=FALSE}
+### Check age at NPS observation versus age at death
+merged <- merge(extractedint, ids[, .(ID, age_death, msex)], by.x = "projid", by.y = "ID")
+
+hist(merged[, age_death - age_int], breaks = 40, col="skyblue2", main = "number of years between NPS observation and death", xlab = "years")
+rm(merged)
+```
+
+
+### Number of visits per participant
+Here is the summary of the number of visits per participant after combining
+all of the NPS datasets. 
+```{r check-number-visits-across-datasets}
+### Combine the projid and age_int columns from each nps set so I can check the last available NPS for each person
+visits.all <- rbindlist(sapply(phesets.nps, function(x) { phenos.ana[[x]][, .(projid, age_int)]   },
+                            simplify = FALSE), idcol = "pheset")
+
+
+Mkable(rbind(summary(as.integer(table(unique(visits.all[, .(projid, age_int)])$projid)))))
+```
+
+
+
+### Select last available visit 
+
+```{r check-last-dataset}
+## Count the number of individuals in different subsets of datasets
+presence_matrix <- data.frame(sapply(phenos[1:4], function(x) { ids$ID %in% x$projid }))
+presence_matrix$n.sets <- apply(presence_matrix, 1, sum)
+setDT(presence_matrix)
+presence_matrix$projid <- ids$ID
+
+
+Pairwise_comparison <- function(x, y) {
+  list(
+    shared = intersect(x, y),
+    unique_to_x = setdiff(x, y),
+    unique_to_y = setdiff(y, x)
+  )
+}
+
+combinations <- combn(setdiff(phesets, "Wingo_Data"), 2, simplify = FALSE)
+
+pairwise_results <- lapply(combinations, function(pair) {
+  list1 <- phenos[[pair[1]]]$projid
+  list2 <- phenos[[pair[2]]]$projid
+  comparison <- Pairwise_comparison(list1, list2)
+  names(comparison) <- c("Shared", paste0("Unique to ", pair[1]), paste0("Unique to ", pair[2]))
+  comparison
+})
+
+names(pairwise_results) <- sapply(combinations, paste, collapse = " vs ")
+```
+
+
+
+```{r check-time-death-last-NPS}
+### Sort by age at visit and extract last visit per participant
+setorder(visits.all, age_int)
+lastvisit <- visits.all[, tail(.SD, 1), by = "projid"]
+lastvisit <- merge(lastvisit, ids[, .(ID, age_death)], by.x = "projid", by.y = "ID")
+
+
+hist(lastvisit[, age_death - age_int], breaks=20, col = "azure2",
+     main = "Time between last NPS and death", xlab = "Years")
+
+summary(lastvisit[, age_death - age_int])
+
+```
+
+
+
+
+All the participants have an NPS visit within 
+`r ceiling(max(lastvisit[, age_death - age_int]))` years of
+death. There are 
+`r sum(lastvisit[, age_death - age_int] < 0)` participants with
+negative time, but that is probably due to sometimes only having years
+instead of precise dates.  
+
+Here is the breakdown of which dataset has the last available visit
+for our participants. This is before checking for NAs, but to check
+for NAs we need to confirm which variables we'll use from each
+dataset. 
+
+
+```{r table-last-pheset}
+Mkable(rbind(addmargins(table(lastvisit$pheset))))
+
+```
+
+
+```{r extract-last-visits}
+## For each participant, extract the last available visit
+lastobs.list <- sapply(phesets.nps, function(aset) {
+    ## Get projids for participants whose last visit was in this set
+    projids <- lastvisit[pheset == aset, projid]
+
+    ## Extract all visits for those participants
+    extracted <- phenos.ana[[aset]][projid %in% projids, ]
+
+    ## Return last visit for those participants
+    setorder(extracted, age_int) ## sort by age at visit
+    return(extracted[, tail(.SD, 1), by = "projid"]) ## return last row for each participant
+}, simplify = FALSE)
+
+
+```
+
+```{r count-missings, eval=FALSE}
+## To pick variables, we want to know if there are any variables that have more missingness so we
+## can exclude them from consideration. Since the different datasets have different variables names
+## and I haven't aligned them all yet, I'm just focusing on the participants with their last visit in the rad20x
+## dataset, which has the most logical variable names and for which I have mapped the variables to data types
+count.missings.lastvisit.20x <- data.frame(n = cbind(apply(lastobs.list[["rad20x"]], 2, function(x) { sum(x %in% 1:6) })))
+count.missings.lastvisit.20x$variable <- rownames(count.missings.lastvisit.20x)
+
+
+
+varstocheckcorr <- scan("vars_tocheck_corr.txt", what = "") ## read tmp file
+tocheckcorr <- lastobs.list[["rad20x"]][, tolower(varstocheckcorr), with = FALSE]
+
+tocheckcorr[tocheckcorr> 2] <- NA_integer_
+
+
+```
+
+
+### Check covariates
+
+
+```{r fig.height=6}
+par(mfrow=c(2,2))
+PlotCategorical("msex", ids)
+PlotCategorical("cogdx", phenos.ana[["Wingo_Data"]])
+PlotContinuous("age_death", ids)
+PlotContinuous("pmi", ids)
+
+
+```
+
+
+```{r write-vars}
+for(x in names(phenos)) {
+    write(names(phenos[[x]]), file = Out.vars(x), ncolumns = 1)
+}
+rm(x)
+```
+
+
+### Gather dementia severity and pathology severity variables for
+### comparing to other cohorts
+
+```{r }
+
+patho  <- phenos.ana$Wingo_Data[, .(projid, cogdx, ad_reagan, niareagansc,
+                                hip_scl_3reg_yn, hspath_typ, caa_4gp, cvda_4gp2, ci_num2_gct, ci_num2_mct)]
+
+                                         
+```
+
+
+```{r finish}
+write.table(patho, file = out.patho, row.names = FALSE, quote = FALSE, sep = "\t")
+
+```
+
+
+## To do
+ * Line up variables across datasets
+ * Define NPS case/control criteria using available variables and
+   longitudinal data
