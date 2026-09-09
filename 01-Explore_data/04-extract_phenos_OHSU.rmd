@@ -28,6 +28,22 @@ knitr::opts_chunk$set(fig.width=12, fig.height=8)
 
 ```{r constants}
 sourceset <- "OHSU"
+
+## Define nps variable names -- all 9 domains
+npsvars.bin.9 <- c(agitation = "agit", anxiety = "anx", apathy = "apa", delusion = "del",
+                 depression = "depd", disinhibition = "disn", hallucination = "hall",
+                 irritability = "irr", sleep = "nite")
+
+npsvars.sev.9 <- paste0(npsvars.bin.9, "sev")
+names(npsvars.sev.9) <- names(npsvars.bin.9)
+
+## Define nps variable names -- combine hall/del and drop disn
+npsvars.bin.7 <- c(agitation = "agit", anxiety = "anx", apathy = "apa",
+                 depression = "depd", irritability = "irr", psychosis = "psych",
+                  sleep = "nite")
+
+npsvars.sev.7 <- paste0(npsvars.bin.7, "sev")
+names(npsvars.sev.7) <- names(npsvars.bin.7)
 ```
 
 
@@ -39,12 +55,12 @@ Mkable <- function(x, ...) { kable(x, format.args = list(big.mark = ','), ...) }
 MakeNPSbintable <- function(dattab) {
   ## Tabulate
     disttab <- data.table(t(dattab[, sapply(.SD, function(x) { table(x, useNA = "always") }),
-                                   .SDcol = npsvars.bin]))
-  disttab[, nps:= npsvars.bin]
+                                   .SDcol = npsvars.bin.9]))
+  disttab[, nps:= npsvars.bin.9]
   setnames(disttab, c("0", "1", "V3"), c("no", "yes", "NA"))
 
   ## Add readable NPS names 
-  disttab <- merge(disttab, data.table(NPS = names(npsvars.bin), nps = npsvars.bin), by = "nps")
+  disttab <- merge(disttab, data.table(NPS = names(npsvars.bin.9), nps = npsvars.bin.9), by = "nps")
 
   ## Add percent cases column
   ## Reorder rows and columns 
@@ -59,12 +75,12 @@ MakeNPSbintable <- function(dattab) {
 MakeNPSsevtable <- function(dattab) {
   ## Tabulate
     disttab <- data.table(t(dattab[, sapply(.SD, function(x) { table(x, useNA = "always") }),
-                                   .SDcol = npsvars.sev]))
-  disttab[, nps:= npsvars.sev]
+                                   .SDcol = npsvars.sev.9]))
+  disttab[, nps:= npsvars.sev.9]
   setnames(disttab, c("V5"), c("NA"))
 
   ## Add readable NPS names 
-  disttab <- merge(disttab, data.table(NPS = names(npsvars.sev), nps = npsvars.sev), by = "nps")
+  disttab <- merge(disttab, data.table(NPS = names(npsvars.sev.9), nps = npsvars.sev.9), by = "nps")
 
 
   ## Add case/control columns -- define 0/1 as controls and 2/3 as cases
@@ -104,6 +120,13 @@ out.cleanedphenos <- paste0(outdir, "phenos_cleaned_", sourceset, ".txt")
 out.long <- paste0(outdir, "longitudinal_cleaned_", sourceset, ".txt")
 out.patho <- paste0(outdir, "patho_", sourceset, ".txt")
 out.patho_filtered_cleaned <- paste0(outdir, "patho_", sourceset, "_filtered_cleaned.txt")
+
+
+## Command to run this script
+thisscript <- "1_Code/01-Explore_data/04-extract_phenos_OHSU.rmd"
+#rmarkdown::render(thisscript, output_dir=outdir, knit_root_dir=getwd(), intermediates_dir=getwd())
+
+
 ```
 
 
@@ -297,23 +320,16 @@ severity variables for each NPS symptom.
 
 
 ```{r get-last-nps}
-npsvars.bin <- c(agitation = "agit", anxiety = "anx", apathy = "apa", delusion = "del",
-                 depression = "depd", disinhibition = "disn", hallucination = "hall",
-                 irritability = "irr", sleep = "nite")
-npsvars.sev <- paste0(npsvars.bin, "sev")
-names(npsvars.sev) <- names(npsvars.bin)
-
-
-varmatch <- sapply(toupper(npsvars.bin), grep, names(phenos[["nps_cirs"]]), value = TRUE)
+varmatch <- sapply(toupper(npsvars.bin.9), grep, names(phenos[["nps_cirs"]]), value = TRUE)
 
 nps.long <- phenos.ana1[["nps_cirs"]][, c("bfonum", "rpatID", "VSTage", "VSTseqno",
                                           as.vector(varmatch)), with = FALSE]
-setnames(nps.long, varmatch[1, ], npsvars.bin)
-setnames(nps.long, varmatch[2, ], npsvars.sev)
+setnames(nps.long, varmatch[1, ], npsvars.bin.9)
+setnames(nps.long, varmatch[2, ], npsvars.sev.9)
 
 
 ### Fill in 0 for NAs in severity variables
-for(avar in npsvars.bin) {
+for(avar in npsvars.bin.9) {
     var.bin <- avar
     var.sev <- paste0(avar, "sev")
     nps.long[is.na(get(var.sev)) & get(var.bin) == 0, (var.sev) := 0]
@@ -362,7 +378,7 @@ Mkable(dist.nps.sev, caption = "Severity distribution at last visit. ")
 
 ```{r find.missing.all.nps, include = FALSE}
 ### Get IDs for people missing all NPS
-index.missing.all.nps <- apply(nps.last[, npsvars.bin, with = FALSE], 1, function(x) {
+index.missing.all.nps <- apply(nps.last[, npsvars.bin.9, with = FALSE], 1, function(x) {
     all(is.na(x)) })
 ids.missing.all.nps <- nps.last[index.missing.all.nps, bfonum]
 
@@ -405,7 +421,7 @@ ids.forana <- setdiff(ids.in.nps, ids.missing.all.nps)
 
 ### Assemble the variables of interest for those participants from the phenos file
 forprint0 <- merge(demog.merged[bfonum %in% ids.forana, .(bfonum, rpatID, clinical_dx)],
-                   nps.last[, c("bfonum", npsvars.bin, npsvars.sev), with = FALSE], by = "bfonum")
+                   nps.last[, c("bfonum", npsvars.bin.9, npsvars.sev.9), with = FALSE], by = "bfonum")
 
 ### Merge in variables from proteomics file
 ids.sub <- ids[ID %in% ids.forana, ]
@@ -423,7 +439,6 @@ pathdiag[, dx2 := tstrsplit(dx_cleaned, split = " 2.0)", keep = 2)]
 pathdiag[, dx2 := tstrsplit(dx2, split = " 3.0)", keep = 1)]
 pathdiag[, dx3 := tstrsplit(dx_cleaned, split = " 3.0)", keep = 2)]
 
-
 ```
 
 
@@ -436,6 +451,18 @@ nps.long.forprint1 <- merge(ids.sub[, .(ID, protsample)], nps.long.forprint0,
                             by.x = "ID", by.y = "bfonum")
 
 ```
+
+```{r update-nps-variables}
+## Add collapsed psychosis variable -- last visit
+forprint1[(hall== 1 | del == 1), psych := 1]
+forprint1[(hall == 0 & del == 0), psych := 0]
+
+## Add collapsed psychosis variable -- longitudinal 
+nps.long.forprint1[(hall== 1 | del == 1), psych := 1]
+nps.long.forprint1[(hall == 0 & del == 0), psych := 0]
+
+```
+
 
 ### Covariate distributions
 Here are the distributions for some of the covariates of interest for
@@ -463,7 +490,6 @@ There is one person that died before age 40.
 ### comparing to other cohorts
 
 ```{r }
-
 ## Not going to print these, but have a look at CIRS longitudinal variables
 cirs <- copy(phenos$nps_cirs)
 setnames(cirs, names(cirs), sapply(names(cirs), function(x) { gsub(" ", "_", x) }))
@@ -480,8 +506,6 @@ patho_merged <- Reduce(function(x, y) { merge(x, y, by = "bfonum", all = TRUE) }
 patho_merged[, path_dx_merged := path_dx]
 patho_merged[is.na(path_dx), path_dx_merged := REGpathDx]
 patho_merged[, c("path_dx", "REGpathDx") := NULL]
-
-
 ```
 
 
