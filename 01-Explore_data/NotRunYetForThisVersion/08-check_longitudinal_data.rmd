@@ -1,0 +1,361 @@
+---
+author: "Selina Vattathil"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r global-options-1, include=FALSE}
+rm(list=ls())
+library(knitr)
+library(data.table)
+library(ggplot2)
+library(argparse)
+library(dplyr)
+library(tidyr)
+library(gridExtra)
+options(stringsAsFactors = FALSE)
+source("~/comsv/Svattathil_Library/svattathil_functions.r")
+```
+
+```{r global-chunk-settings-1, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=TRUE, message=TRUE, include=TRUE, collapse=TRUE)
+```
+
+```{r word-document-settings-1, include=FALSE, eval=TRUE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4)
+```
+
+```{r html-document-settings-1, include=FALSE, eval=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8)
+```
+
+```{r constants}
+npsvars.bin <- c(agitation = "agit", anxiety = "anx", apathy = "apa", delusion = "del",
+                 depression = "depd", disinhibition = "disn", hallucination = "hall",
+                 irritability = "irr", sleep = "nite")
+
+```
+
+```{r functions, include=FALSE}
+## function to use , thousands separator for numbers in kable
+Mkable <- function(x, ...) { kable(x, format.args = list(big.mark = ','), ...) }
+```
+
+
+```{r command-line-arguments}
+## Create parser
+parser <- ArgumentParser()
+parser$add_argument("--cohort", type="character", default = "OHSU", help="OHSU or emory")
+
+## Read from parser
+args <- parser$parse_args()
+
+
+```
+
+---
+title: Explore longitudinal data -- `r args$cohort`
+---
+
+```{r define-input}
+infiles <- list(long = paste0("2_Pipeline/01-Explore_data/longitudinal_cleaned_", args$cohort, ".txt"),
+              basic = paste0("2_Pipeline/01-Explore_data/phenos_cleaned_", args$cohort, ".txt"))
+```
+
+
+```{r define-output}
+outfiles <- list(persistent_cases = paste0("2_Pipeline/01-Explore_data/phenos_persistent_cases_", args$cohort, ".txt"))
+```
+
+
+```{r read-data}
+dat.basic <- fread(infiles[["basic"]])
+dat.long <- fread(infiles[["long"]])
+
+```
+
+
+```{r prepare-data-1}
+
+```
+
+### How many visits per participant?
+Note: These counts are not considering whether the visit has real
+observations or NA. The NAs may vary across NPS. 
+```{r }
+visits.pp <- dat.long[, list(n.visits = .N), by = "protsample"]
+visits.pp.tab <- table(visits.pp$n.visits)
+
+vis_df <- data.frame(
+  visits   = as.integer(names(visits.pp.tab)),   # number of visits (x‑axis)
+  participants = as.integer(visits.pp.tab),     # count of participants (y‑axis)
+  stringsAsFactors = FALSE
+)
+
+## Print summary statistics
+summary(visits.pp$n.visits)
+
+## Draw bar plot
+ggplot(vis_df, aes(x = factor(visits), y = participants)) +
+  geom_col(fill = "#4C72B0", width = 0.7) +           # same colour as base R bar
+  geom_text(aes(label = participants), vjust = -0.5, size = 3.5) +  # label counts
+  labs(
+    title    = paste0("Number of visits per participant (", args$cohort, ", N = ", sum(visits.pp.tab), ")"),
+    x        = "Visits per participant",
+    y        = "Participants"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank()
+  )
+
+```
+
+
+```{r non-na-visits, eval = FALSE}
+### How many visits with data per participant, per NPS? 
+for(anps in npsvars.bin) {
+    this.nps <- dat.long[!is.na(unlist(dat.long[, anps, with = FALSE])), ] ## visits with non-missing for this nps
+    this.nps.tab <- table(this.nps[, list(n.good.visits = .N), by = "protsample"]$n.good.visits)
+
+    print(anps)
+    print(kable(rbind(this.nps.tab), row.names = FALSE, caption = anps))
+}
+rm(anps)
+
+```
+
+
+### How many visits have NA observation, per NPS?
+```{r check-missingness}
+kable(dat.long[, lapply(.SD, function(x) { sum(is.na(x)) }), .SDcol = npsvars.bin])
+```
+
+
+### Plot the participant's case rate against their number of visits
+```{r plot-case-rate,  fig.width=7, fig.height=10}
+ 
+n.case.visits <- dat.long[, lapply(.SD, function(x) { sum(x==1, na.rm=TRUE) }), .SDcols = npsvars.bin, by = "protsample"]
+n.control.visits <- dat.long[, lapply(.SD, function(x) { sum(x==0, na.rm=TRUE) }), .SDcols = npsvars.bin, by = "protsample"]
+n.total.visits <- dat.long[, lapply(.SD, function(x) { sum(x %in% c(0,1), na.rm=TRUE) }), .SDcols = npsvars.bin, by = "protsample"]
+
+setorder(n.case.visits, protsample)
+setorder(n.total.visits, protsample)
+
+
+if(all(n.case.visits$protsample == n.total.visits$protsample)) {
+    mean.across.visits <- n.case.visits[, -c("protsample")] / n.total.visits[, -c("protsample")]
+    
+}
+
+### Plot the participant's case rate across visits against their number of visits
+## Set up for the plot
+max_visits <- max(unlist(n.total.visits[, -c("protsample")]))
+
+## This is a helper table to draw the lines 
+curve_grid <- crossing(
+  x = 1:max_visits,   # every integer x you care about
+  n = 1:max_visits              # each constant n
+)
+setDT(curve_grid)
+curve_grid <- curve_grid[n <= x, ]
+curve_grid[, y := n / x]
+
+## Draw a plot for each NPS and save as a list
+rate_plots <- sapply(npsvars.bin, function(currnps) {
+    toplot <- cbind(total_visits = unlist(n.total.visits[, ..currnps]), mean_status = unlist(mean.across.visits[, ..currnps]))
+
+    ## Draw lines for 0 case visits, 1 case visit, 2 case visits, etc.
+    p <- ggplot(toplot, aes(x = total_visits, y = mean_status)) +
+        geom_line(data = curve_grid,
+            aes(x = x, y = y, group = factor(n)), colour = "grey80", 
+            linewidth = 0.5, linetype = "dashed", show.legend = FALSE) +
+        geom_hline(yintercept = 0, colour = "grey80", linewidth = 0.5, linetype = "dashed") + 
+
+    ## Add jittered points; adjust width/height as needed
+        geom_jitter(width = 0.15, height = 0.005,
+                    shape = 21,               # filled circle
+                    colour = "NavyBlue",
+                    fill   = "DodgerBlue",
+                    size   = 2,
+                    alpha  = 0.6) +           # semi‑transparent for overlap
+        labs(title = paste0(names(npsvars.bin)[npsvars.bin == currnps]),
+             x = "Total Visits",
+             y = "Rate of case visits") +
+    theme_minimal() +
+    theme(panel.grid.major.y = element_blank(),
+                  panel.grid.minor.y = element_blank()) +
+    scale_x_continuous(breaks = 1:max_visits) +
+    scale_y_continuous(breaks = seq(0, 1, 0.2))
+
+    return(p)
+}, simplify = FALSE)
+
+
+## Print the plots 
+marrangeGrob(grobs = rate_plots, layout_matrix = matrix(c(1:9, NA), ncol = 2, byrow = TRUE), top = "")
+
+
+```
+
+
+
+### How many participants are cases at >=2 visits? 
+
+
+Definitions:  
+Note -- a visit is counted for an NPS only if it had a non-NA observation. 
+
+ * case:       participant had at least two visits and was case at at least 2 visits,
+ * control:    participant had at least two visits and was control at all visits,
+ * NA:         participant had only one visit, or was case at exactly one visit.
+
+
+```{r get-persistent-cases}
+## Combine total visit counts and case visit counts into one table
+merged_dt <- merge(
+  n.total.visits,
+  n.case.visits,
+  by = "protsample",
+  suffixes = c(".tot", ".case"),
+  all = TRUE   
+)
+
+## Apply the three‑rule logic (vectorised)
+## Make a list with one element per NPS
+status_list <- lapply(npsvars.bin, function(var) {
+    tot_col  <- merged_dt[[paste0(var, ".tot")]]   # extract for convenience
+    case_col <- merged_dt[[paste0(var, ".case")]]  # extract for convenience
+    
+    status <- fifelse(
+        tot_col >= 2 & case_col >= 2, 1,       # case -- ≥2 total visits AND ≥2 case visits
+        fifelse(
+            tot_col >= 2 & case_col == 0, 0,   # control -- ≥2 total visits AND 0 case visits
+            NA_integer_                        # everything else → NA
+        )
+    )
+    return(status)
+})
+
+## Use code names and convert to data table with sample column
+names(status_list) <- npsvars.bin
+status_cols <- as.data.table(status_list)
+nps.persist <- data.table(protsample = merged_dt$protsample, status_cols)
+
+
+kable(nps.persist[, lapply(.SD, function(x) { sum(x, na.rm = TRUE) }),  .SDcol = npsvars.bin],
+      caption = "Case counts")
+
+kable(nps.persist[, lapply(.SD, function(x) { sum(is.na(x)) }),  .SDcol = npsvars.bin],
+      caption = paste0("Total participants dropped from analysis (out of ", nrow(nps.persist), ")"))
+
+
+
+## Make new phenos table using the persistent case definition
+## first copy the existing phenotype table
+## and delete the old NPS columns
+dat.persist0 <- copy(dat.basic)
+dat.persist0[, c(npsvars.bin, paste0(npsvars.bin, "sev")) := NULL]
+
+## Add new nps columns
+dat.persist <- dplyr::left_join(dat.persist0, nps.persist, by = "protsample")
+
+## Old definition -- case if case at >=2 visits, control otherwise
+#nps.persist <- dat.long[, lapply(.SD, function(x) { ifelse((sum(x, na.rm = TRUE) >= 2), 1, 0) }), .SDcol = npsvars.bin, by = "protsample"]
+
+```
+
+
+For comparison, here are the case counts from the last visit data we
+have been using:
+
+```{r print-current}
+kable(dat.basic[, lapply(.SD, function(x) { sum(x) }),  .SDcol = npsvars.bin],
+      caption = "Case counts when case = 'case at last visit'")
+```
+
+
+### Compare average to last visit NPS 
+```{r compare-average}
+nps.avg <- dat.long[, lapply(.SD, function(x) { mean(x, na.rm = TRUE)  }), .SDcol = npsvars.bin, by = "protsample"]
+
+setorder(nps.avg, protsample)
+setorder(dat.basic, protsample)
+
+
+if (!identical(dat.basic$protsample, nps.avg$protsample)) {
+  stop("The 'protsample' columns are not identical or not in the same order.")
+}
+
+## Initiate vectors to hold results
+corr_vals <- numeric(length(npsvars.bin))
+p_vals    <- numeric(length(npsvars.bin))
+
+for (i in seq_along(npsvars.bin)) {
+    col_name <- npsvars.bin[i]
+
+    x <- dat.basic[[col_name]]
+    y <- nps.avg[[col_name]]
+
+    
+    test_res <- cor.test(x, y, method = "pearson")
+    corr_vals[i] <- test_res$estimate   # correlation coefficient
+    p_vals[i]    <- test_res$p.value    # two‑sided p‑value
+}
+
+
+symptom_corr <- data.table(
+  symptom     = npsvars.bin,
+  correlation = round(corr_vals, 3),
+  p_value     = signif(p_vals, 3)
+)
+
+# Create an empty matrix filled with NA
+corr_mat <- matrix(NA_real_, nrow = length(npsvars.bin), ncol = length(npsvars.bin),
+                   dimnames = list(npsvars.bin, npsvars.bin))
+
+# Fill the diagonal with the actual correlation values
+diag(corr_mat) <- symptom_corr$correlation
+
+## reshape to long format
+corr_long <- as.data.table(reshape2::melt(corr_mat,
+                                          varnames = c("symptom_x", "symptom_y"),
+                                          value.name = "correlation"))
+
+ggplot(corr_long, aes(x = symptom_x, y = symptom_y, fill = correlation)) +
+    geom_tile(color = "white", na.rm = FALSE) +               # draws the squares
+
+    ## Print the numeric value only on the diagonal (where we have data)
+    geom_text(aes(label = ifelse(!is.na(correlation),
+                                 sprintf("%.2f", correlation), "")),
+              size = 4, colour = "black") +
+
+    ## Diverging colour scale centred at zero
+    scale_fill_gradient2(low  = "#4C72B0",   # blue for negative
+                         mid  = "white",
+                         high = "#D55E00",   # orange/red for positive
+                         midpoint = 0,
+                         limits = c(-1, 1),
+                         na.value = "grey95",   # colour for empty cells
+                         name = "Correlation") +
+
+                                        # Clean up axes
+    labs(title = paste0("Correlation of last-visit and average NPS -- ", args$cohort,
+                        "\n(using binary observations)"),
+         x = NULL, y = NULL) +
+
+    theme_minimal(base_size = 12) +
+    theme(
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid  = element_blank(),
+        legend.position = "right"
+    )
+```
+
+
+```{r finish}
+### Write new phenotype file using persistent case definition to file
+fwrite(dat.persist, file = outfiles[["persistent_cases"]], sep = "\t")
+```
+

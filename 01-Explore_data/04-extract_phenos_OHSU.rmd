@@ -38,7 +38,8 @@ Mkable <- function(x, ...) { kable(x, format.args = list(big.mark = ','), ...) }
 ## tabulate distribution of binary variables
 MakeNPSbintable <- function(dattab) {
   ## Tabulate
-  disttab <- data.table(t(dattab[, sapply(.SD, function(x) { table(x, useNA = "always") }), .SDcol = npsvars.bin]))
+    disttab <- data.table(t(dattab[, sapply(.SD, function(x) { table(x, useNA = "always") }),
+                                   .SDcol = npsvars.bin]))
   disttab[, nps:= npsvars.bin]
   setnames(disttab, c("0", "1", "V3"), c("no", "yes", "NA"))
 
@@ -47,7 +48,8 @@ MakeNPSbintable <- function(dattab) {
 
   ## Add percent cases column
   ## Reorder rows and columns 
-  disttab[, percent.cases := sapply((yes / (no + yes)*100), function(x) { paste0(sprintf("%.1f",x), "%") })]
+    disttab[, percent.cases := sapply((yes / (no + yes)*100), function(x) {
+        paste0(sprintf("%.1f",x), "%") })]
   setcolorder(disttab, c("nps", "NPS", "percent.cases"))
   setorder(disttab, yes)
   return(disttab)
@@ -56,7 +58,8 @@ MakeNPSbintable <- function(dattab) {
 ## tabulate distribution of severity variables
 MakeNPSsevtable <- function(dattab) {
   ## Tabulate
-  disttab <- data.table(t(dattab[, sapply(.SD, function(x) { table(x, useNA = "always") }), .SDcol = npsvars.sev]))
+    disttab <- data.table(t(dattab[, sapply(.SD, function(x) { table(x, useNA = "always") }),
+                                   .SDcol = npsvars.sev]))
   disttab[, nps:= npsvars.sev]
   setnames(disttab, c("V5"), c("NA"))
 
@@ -68,7 +71,8 @@ MakeNPSsevtable <- function(dattab) {
   ## Add percent cases columns
   disttab[, control.sev := apply(.SD, 1, sum), .SDcol=c("0", "1")]
   disttab[, case.sev := apply(.SD, 1, sum), .SDcol=c("2", "3")]
-  disttab[, percent.cases := sapply((case.sev / (case.sev + control.sev)*100), function(x) { paste0(sprintf("%.1f",x), "%") })]
+    disttab[, percent.cases := sapply((case.sev / (case.sev + control.sev)*100), function(x) {
+        paste0(sprintf("%.1f",x), "%") })]
 
   ## Reorder rows and columns 
   setcolorder(disttab, c("nps", "NPS"))
@@ -228,7 +232,9 @@ Mkable(rbind((summ.n.visits)))
 ### Sanity checks
 
 ```{r check-sex}
-sanity <- merge(ids, phenos.ana1[["demog1"]][, .(bfonum, Rsex, Rethnic, REGhispanic, Age_at_death, Rdxcode)], by.x = "ID", by.y = "bfonum")
+sanity <- merge(ids, phenos.ana1[["demog1"]][, .(bfonum, Rsex, Rethnic, REGhispanic,
+                                                 Age_at_death, Rdxcode)],
+                by.x = "ID", by.y = "bfonum")
 
 checks <- vector()
 ## Check that sex matches
@@ -262,7 +268,8 @@ Here is the breakdown of clinical diagnosis.
 
 
 ```{r }
-demog.merged <- Reduce( function(x, y) { merge(x, y, by = c("bfonum", "rpatID")) }, phenos.ana1[c("demog1", "demog2")])
+demog.merged <- Reduce( function(x, y) {
+    merge(x, y, by = c("bfonum", "rpatID")) }, phenos.ana1[c("demog1", "demog2")])
 
 dxkey <- data.table(matrix(c(
 "INCIPDEM", "Incipient dementia", 
@@ -276,7 +283,8 @@ setDT(dxkey)
 setkey(dxkey, "var")
 
 demog.merged[, diagnosis := dxkey[clinical_dx, "defini"]]
-Mkable(addmargins(table(demog.merged[, diagnosis], useNA = "ifany")), caption = "Clinical diagnosis from demographic table.")
+Mkable(addmargins(table(demog.merged[, diagnosis], useNA = "ifany")),
+       caption = "Clinical diagnosis from demographic table.")
 
 ```
 
@@ -298,7 +306,8 @@ names(npsvars.sev) <- names(npsvars.bin)
 
 varmatch <- sapply(toupper(npsvars.bin), grep, names(phenos[["nps_cirs"]]), value = TRUE)
 
-nps.long <- phenos.ana1[["nps_cirs"]][, c("bfonum", "rpatID", "VSTage", "VSTseqno", as.vector(varmatch)), with = FALSE]
+nps.long <- phenos.ana1[["nps_cirs"]][, c("bfonum", "rpatID", "VSTage", "VSTseqno",
+                                          as.vector(varmatch)), with = FALSE]
 setnames(nps.long, varmatch[1, ], npsvars.bin)
 setnames(nps.long, varmatch[2, ], npsvars.sev)
 
@@ -323,9 +332,11 @@ nps.last <- nps.long[, tail(.SD, 1), by = "bfonum"]
 
 ```{r check-time-to-death}
 ### Make table to look at time from death to last NPS visit
-timetab <- merge(ids[, .(ID, age_death)], nps.last[, .(bfonum, VSTage)], by.x = "ID", by.y = "bfonum")
+timetab <- merge(ids[, .(ID, age_death)], nps.last[, .(bfonum, VSTage)],
+                 by.x = "ID", by.y = "bfonum")
 timeinterval <- timetab[, age_death - VSTage] 
-hist(timeinterval, breaks = 40, col = "azure2", main = "time between last NPS and death", xlab = "Years")
+hist(timeinterval, breaks = 40, col = "azure2",
+     main = "time between last NPS and death", xlab = "Years")
 
 ```
 
@@ -351,7 +362,8 @@ Mkable(dist.nps.sev, caption = "Severity distribution at last visit. ")
 
 ```{r find.missing.all.nps, include = FALSE}
 ### Get IDs for people missing all NPS
-index.missing.all.nps <- apply(nps.last[, npsvars.bin, with = FALSE], 1,  function(x) { all(is.na(x)) })
+index.missing.all.nps <- apply(nps.last[, npsvars.bin, with = FALSE], 1, function(x) {
+    all(is.na(x)) })
 ids.missing.all.nps <- nps.last[index.missing.all.nps, bfonum]
 
 ### Check if NPS is available for any other visits 
@@ -372,8 +384,12 @@ ids.missing.all.nps
 dist.nps.bin.updated <- MakeNPSbintable(nps.last[!bfonum %in% ids.missing.all.nps, ])
 dist.nps.sev.updated <- MakeNPSsevtable(nps.last[!bfonum %in% ids.missing.all.nps, ])
 
-Mkable(dist.nps.bin.updated, caption = "Case/control distribution at last visit (after removing participants with all missing data). ")
-Mkable(dist.nps.sev.updated, caption = "Severity distribution at last visit(after removing participants with all missing data). ")
+Mkable(dist.nps.bin.updated,
+       caption = paste0("Case/control distribution at last visit ",
+                        "(after removing participants with all missing data). "))
+Mkable(dist.nps.sev.updated,
+       caption = paste0("Severity distribution at last visit ",
+                        "(after removing participants with all missing data). "))
 ```
 
 ```{r add-collapsed-vars}
@@ -416,7 +432,8 @@ pathdiag[, dx3 := tstrsplit(dx_cleaned, split = " 3.0)", keep = 2)]
 nps.long.forprint0 <- nps.long[bfonum %in% ids.forana]
 
 ## add protsample column
-nps.long.forprint1 <- merge(ids.sub[, .(ID, protsample)], nps.long.forprint0, by.x = "ID", by.y = "bfonum")
+nps.long.forprint1 <- merge(ids.sub[, .(ID, protsample)], nps.long.forprint0,
+                            by.x = "ID", by.y = "bfonum")
 
 ```
 
@@ -429,7 +446,8 @@ the `r length(ids.forana)` participants to be included in the analysis.
 par(mfrow=c(2,2))
 
 
-##PlotCategorical("GENDER_DESC", phenos.ana[["demographics"]]); title("from demographics table", line=0.5)
+##PlotCategorical("GENDER_DESC", phenos.ana[["demographics"]]);
+##title("from demographics table", line=0.5)
 PlotCategorical("msex", ids.sub, xsrt=0)
 PlotCategorical("clinical_dx", forprint1, xsrt = 45); title("at last visit", line = 0.5)
 PlotContinuous("age_death", ids.sub)
@@ -485,18 +503,22 @@ patho_merged[, c("path_dx", "REGpathDx") := NULL]
 
 ```{r finish}
 ## Write cleaned phenos to file 
-write.table(forprint1, out.cleanedphenos, row.names = FALSE, quote = FALSE, sep = "\t")
+write.table(forprint1, out.cleanedphenos,
+            row.names = FALSE, quote = FALSE, sep = "\t")
 
 
 ## Write longitudinal observations to file
-write.table(nps.long.forprint1, out.long, row.names = FALSE, quote = FALSE, sep = "\t")
+write.table(nps.long.forprint1, out.long,
+            row.names = FALSE, quote = FALSE, sep = "\t")
 
 
 ## write patho / dementia variables to file
-write.table(patho_merged, file = out.patho, row.names = FALSE, quote = FALSE, sep = "\t")
+write.table(patho_merged, file = out.patho,
+            row.names = FALSE, quote = FALSE, sep = "\t")
 
 ## write filtered and cleaned patho dx to file
-write.table(pathdiag, file = out.patho_filtered_cleaned, row.names = FALSE, quote = FALSE, sep = "\t")
+write.table(pathdiag, file = out.patho_filtered_cleaned,
+            row.names = FALSE, quote = FALSE, sep = "\t")
 
 ```
 

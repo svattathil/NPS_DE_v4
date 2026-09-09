@@ -1,0 +1,173 @@
+---
+title: "Summarize pathology and dementia severity"
+author: "Selina Vattathil"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r global-options-1, include=FALSE}
+rm(list=ls())
+library(knitr)
+library(data.table)
+library(ggplot2)
+options(stringsAsFactors = FALSE)
+source("~/comsv/Svattathil_Library/svattathil_functions.r")
+```
+
+```{r global-chunk-settings-1, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=TRUE, message=TRUE, include=TRUE, collapse=TRUE)
+```
+
+```{r word-document-settings-1, include=FALSE, eval=TRUE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4)
+```
+
+```{r html-document-settings-1, include=FALSE, eval=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8)
+```
+
+```{r constants}
+cohorts <- c("OHSU", "rush", "emory")
+
+
+```
+
+```{r functions, include=FALSE}
+## function to use , thousands separator for numbers in kable
+Mkable <- function(x, ...) { kable(x, format.args = list(big.mark = ','), ...) }
+```
+
+
+
+```{r define-input}
+indir <- "2_Pipeline/01-Explore_data/"
+files_patho <- sapply(cohorts, function(x) { paste0(indir, "patho_", x, ".txt") })
+files_main <- sapply(cohorts, function(x) { paste0(indir, "phenos_cleaned_", x, ".txt") })
+
+
+```
+
+
+```{r define-output}
+
+```
+
+
+```{r read-data}
+main <- sapply(files_main, fread)
+patho <- sapply(files_patho, fread)
+
+```
+
+
+```{r prepare-data-1}
+## Harmonize ID columns
+setnames(patho$OHSU, "bfonum", "ID")
+setnames(patho$rush, "projid", "ID")
+main$emory[, ID := NULL]
+setnames(main$emory, "GUID", "ID")
+setnames(patho$emory, "GUID", "ID")
+
+
+### Merge main phenos and new patho/severity phenos
+merged <- sapply(cohorts, function(acohort) {
+    merge(main[[acohort]], patho[[acohort]], by = "ID", all.x = TRUE)
+})
+
+## For OHSU, prepare the path_dx variable to a more readable form
+merged$OHSU[, path_dx_merged := gsub("1.0\\)", "", path_dx_merged)]
+merged$OHSU[, path_dx_merged := gsub("1\\)", "", path_dx_merged)]
+merged$OHSU[, path_dx_merged := gsub("2.0\\)", "+", path_dx_merged)]
+merged$OHSU[, path_dx_merged := gsub("2.0", "+", path_dx_merged)]
+merged$OHSU[, path_dx_merged := gsub("3.0\\)", "+", path_dx_merged)]
+merged$OHSU[, path_dx_merged := gsub("2\\)", "+", path_dx_merged)]
+merged$OHSU[, path_dx_merged := gsub("3\\)", "+", path_dx_merged)]
+merged$OHSU[, path_dx_merged := gsub("  ", " ", path_dx_merged)]
+
+
+## Get sample sizes
+sampsizes <- sapply(merged, nrow)
+
+```
+
+## Sample sizes
+
+```{r }
+Mkable(rbind(sample_size = sampsizes))
+```
+
+
+## Brain pathology variables
+
+* Emory - none available
+* OHSU - path_dx available in format like "1.0) AD" or "1.0) LBD 2.0) AD 3.0) VD"
+* Rush - 
+    + Braak, Reagan AD, NIA AD, chronic gross infarct, and chronic
+      microinfarct scores available with full completeness
+    + hspath_typ and cvda_4gp available but poor completeness
+
+### Plots:
+#### OHSU
+For the plot label, I converted the codes from format like "1.0) AD"
+or "1.0) LBD 2.0) AD 3.0) VD"
+to "AD" or "LBD + AD + VD" to improve readability and to clean up
+redundant labels. However, I am not
+sure whether that is the correct way to interpret the codes, so we
+should check this. 
+
+
+```{r fig.width = 8}
+par(mar = c(8, 4, 3, 2))
+PlotCategorical("path_dx_merged", merged$OHSU, xsrt = 45)
+
+```
+
+
+#### Rush
+```{r }
+par(mar = c(5, 4, 3, 2))
+PlotCategorical("braaksc", merged$rush)
+PlotCategorical("ad_reagan", merged$rush)
+PlotCategorical("niareagansc", merged$rush)
+PlotCategorical("ci_num2_gct", merged$rush)
+PlotCategorical("ci_num2_mct", merged$rush)
+PlotCategorical("hspath_typ", merged$rush)
+PlotCategorical("cvda_4gp2", merged$rush)
+```
+
+## Dementia severity measures
+
+### Plots
+
+#### OHSU
+
+```{r }
+par(mar = c(8, 4, 3, 2))
+PlotCategorical("clinical_dx", merged$OHSU, xsrt = 45)
+```
+
+
+### Rush 
+```{r }
+par(mar = c(5, 4, 3, 2))
+PlotCategorical("cogdx", merged$rush)
+
+```
+
+#### Emory
+
+```{r }
+PlotCategorical("UDS_dx", merged$emory)
+
+```
+
+```{r }
+
+```
+
+
+
+
+```{r finish}
+
+```
