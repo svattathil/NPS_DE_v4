@@ -13,7 +13,6 @@ options(stringsAsFactors = FALSE)
 
 sourceset <- "Rush"
 
-
 ## Define nps variable names -- all 9 domains
 npsvars.bin.9 <- c(agitation = "agit", anxiety = "anx", apathy = "apa", delusion = "del",
                  depression = "depd", disinhibition = "disn", hallucination = "hall",
@@ -242,7 +241,7 @@ sumscores.list <- sapply(lastobs1.bynps, function(x) {
 }, simplify = FALSE)
 
 
-### Calculate case/control rates
+### Assign case/control status
 ## Define score threshold
 ## Participants with scores higher than this will be classified as cases
 meanthresh <- 0
@@ -251,16 +250,9 @@ for(anps in names(sumscores.list)) {
     sumscores.list[[anps]][, c(anps) := ifelse(meanscore > meanthresh, 1, 0)]
 }
 
-if(0) {
-    ## For apathy, instead of using a threshold, we're going to split based on a percentile
-    percentilethresh <- 0.3
-    p30 <- quantile(sumscores.list[["apathy"]]$meanscore, na.rm=TRUE, probs=percentilethresh)
 
-    sumscores.list[["apathy"]][, apathy := NA]
-    sumscores.list[["apathy"]][, apathy := ifelse(meanscore <= p30, 0, 1)]
-}
-
-caserates <- data.frame(t(sapply(names(sumscores.list), function(anps) {
+### Calculate case rates
+caserates.all <- data.frame(t(sapply(names(sumscores.list), function(anps) {
     return(c(
         NPS = anps,
         percent.cases = MakeFrac(mean(sumscores.list[[anps]][, get(anps)], na.rm=TRUE),
@@ -270,36 +262,39 @@ caserates <- data.frame(t(sapply(names(sumscores.list), function(anps) {
         na = sum(is.na(sumscores.list[[anps]][, get(anps)]))
     ))
 })))
-setDT(caserates)
-setnames(caserates, "na", "NA")
-setorder(caserates, percent.cases)
-caserates[, percent.cases := paste0(percent.cases, "%")]
+setDT(caserates.all)
+setnames(caserates.all, "na", "NA")
+setorder(caserates.all, percent.cases)
+caserates.all[, percent.cases := paste0(percent.cases, "%")]
 
 
-### Assemble final dataset
-## Assemble NPS
+### Assemble NPS
 formerge <- lapply(names(sumscores.list), function(anps) {
     sumscores.list[[anps]][, c("projid", anps), with = FALSE] })
-npsobs <- Reduce(function(x,y) { merge(x, y, by = "projid") }, formerge)
+npsobs.all <- Reduce(function(x,y) { merge(x, y, by = "projid") }, formerge)
 
 ## Update NPS names
-setnames(npsobs, names(npsvars.bin.9), npsvars.bin.9)
+setnames(npsobs.all, names(npsvars.bin.9), npsvars.bin.9)
+
+## Add psychosis variable
+npsobs.all[hall == 1 | del == 1, psych := 1]
+npsobs.all[hall == 0 & del == 0, psych := 0]
+npsobs.all[hall == 0 & is.na(del), psych := 0]
+npsobs.all[del == 0 & is.na(hall), psych := 0]
+
+
+### Filter to individuals with complete data for the 7 NPS domains
+keep_complete <- complete.cases(npsobs.all[, c("projid", npsvars.bin.7), with = FALSE])
+npsobs <- npsobs.all[keep_complete, ]
 
 ## Add Braak score
-phenos.forprint <- merge(phenos.ana[["Wingo_Data"]][, .(projid, braaksc)], npsobs,
+phenos.forprint <- merge(phenos.ana[["Wingo_Data"]][, .(projid, braaksc)],
+                         npsobs,
                          all.y=TRUE, by="projid")
 
 ## Add variables from id table
 phenos.forprint <- merge(ids[, .(ID, protsample, Batch, age_death, msex, pmi)], phenos.forprint,
                          by.x="ID", by.y = "projid")
-
-
-
-### Add psychosis variable
-phenos.forprint[hall == 1 | del == 1, psych := 1]
-phenos.forprint[hall == 0 & del == 0, psych := 0]
-phenos.forprint[hall == 0 & is.na(del), psych := 0]
-phenos.forprint[del == 0 & is.na(hall), psych := 0]
 
 
 ### Do some checks - These don't directly contribute to the case definitions ###
@@ -353,6 +348,7 @@ forcheck_long_del_disn <- mergedvars[, c("projid", "age_int", "pheset",
 forcheck_long_del_disn <- merge(npsobs[, .(projid, del, disn)], forcheck_long_del_disn, by = "projid")
 setorder(forcheck_long_del_disn, "projid", "age_int")
 
+
 ### Check distribution for each item used for apathy
 apathy_items <- selectedvars[NPS == "apathy", label_20x]
 
@@ -361,12 +357,8 @@ apply(X = _, MARGIN = 2, FUN = table, useNA = "ifany") |>
 addmargins(A = _, margin = 1)
 
 
-
-
 ###### FINISH ######
-write.table(caserates, file = out.caserates,
-            row.names = FALSE, quote = FALSE, sep = "\t")
 write.table(phenos.forprint, file = out.cleanedphenos,
             row.names = FALSE, quote = FALSE, sep = "\t")
-write.table(forcheck_long_del_disn, file = out.check_long_del_disn,
-            row.names = FALSE, quote = FALSE, sep = "\t")
+#write.table(forcheck_long_del_disn, file = out.check_long_del_disn,
+#            row.names = FALSE, quote = FALSE, sep = "\t")

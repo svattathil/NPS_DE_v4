@@ -453,13 +453,28 @@ nps.long.forprint1 <- merge(ids.sub[, .(ID, protsample)], nps.long.forprint0,
 ```
 
 ```{r update-nps-variables}
-## Add collapsed psychosis variable -- last visit
+### Add collapsed psychosis variables 
+## Last visit
+# Binary
 forprint1[(hall== 1 | del == 1), psych := 1]
 forprint1[(hall == 0 & del == 0), psych := 0]
 
-## Add collapsed psychosis variable -- longitudinal 
+# Severity - take max 
+forprint1[, psychsev := pmax(
+  as.numeric(as.character(hallsev)), as.numeric(as.character(delsev)),
+  na.rm = TRUE
+  )]
+
+## Longitudinal
+# Binary
 nps.long.forprint1[(hall== 1 | del == 1), psych := 1]
 nps.long.forprint1[(hall == 0 & del == 0), psych := 0]
+
+## Severity - use max severity
+nps.long.forprint1[, psychsev := pmax(
+  as.numeric(as.character(hallsev)), as.numeric(as.character(delsev)),
+  na.rm = TRUE
+)]
 
 ```
 
