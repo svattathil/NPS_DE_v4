@@ -24,17 +24,31 @@ library(lubridate)
 options(stringsAsFactors = FALSE)
 ```
 
+```{r constants}
+sourceset <- "emory"
+## Define nps variable names -- all 9 domains
+npsvars.bin.9 <- c(agitation = "agit", anxiety = "anx", apathy = "apa", delusion = "del",
+                 depression = "depd", disinhibition = "disn", hallucination = "hall",
+                 irritability = "irr", sleep = "nite")
+
+npsvars.sev.9 <- paste0(npsvars.bin.9, "sev")
+names(npsvars.sev.9) <- names(npsvars.bin.9)
+
+## Define nps variable names -- combine hall/del and drop disn
+npsvars.bin.7 <- c(agitation = "agit", anxiety = "anx", apathy = "apa",
+                 depression = "depd", irritability = "irr", psychosis = "psych",
+                  sleep = "nite")
+
+npsvars.sev.7 <- paste0(npsvars.bin.7, "sev")
+names(npsvars.sev.7) <- names(npsvars.bin.7)
+```
+
 
 ```{r functions}
 source("~/comsv/Svattathil_Library/svattathil_functions.r")
 ## function to use , thousands separator for numbers in kable
 Mkable <- function(x, ...) { kable(x, format.args = list(big.mark = ','), ...) }
 
-```
-
-
-```{r constants}
-sourceset <- "emory"
 ```
 
 
@@ -67,6 +81,12 @@ outdir <- "2_Pipeline/01-Explore_data/"
 out.cleanedphenos <- paste0(outdir, "phenos_cleaned_", sourceset, ".txt")
 out.long <- paste0(outdir, "longitudinal_cleaned_", sourceset, ".txt")
 out.patho <- paste0(outdir, "patho_", sourceset, ".txt")
+
+## Command to run this script
+thisscript <- "1_Code/01-Explore_data/06-extract_phenos_emory.rmd"
+#rmarkdown::render(thisscript, output_dir=outdir, knit_root_dir=getwd(), intermediates_dir=getwd())
+
+
 ```
 
 
@@ -125,7 +145,8 @@ for(aguid in supprace[, GUID]) {
         phenos[["demographics"]][GUID == aguid, RACE_DESC := newrace]
     } else {
         ## add new row to demographics -- will have data for only GUID and race
-        phenos[["demographics"]] <- rbindlist(list(phenos[["demographics"]], supprace[GUID == aguid, ]), fill=TRUE)
+        phenos[["demographics"]] <- rbindlist(list(phenos[["demographics"]], supprace[GUID == aguid, ]),
+                                              fill=TRUE)
     }
 }
 rm(aguid)
@@ -372,7 +393,10 @@ fordx[normcog == 0 & demented == 1 & (probad == 0 | alzdis == 0), dx := "other_d
 
 ```{r check-moca-mmse, include = FALSE}
 ## Extract rows for our participants with non-missing result
-mocammse.nonmissing <- phenos[["mocammse"]][(GUID %in% ids$GUID) & !is.na(SERVICE_DT) & (!is.na(MOCA_RAW_SCORE) | !is.na(MMSE_RAW_SCORE)), ]
+mocammse.nonmissing <- phenos[["mocammse"]][(GUID %in% ids$GUID) &
+                                            !is.na(SERVICE_DT) &
+                                            (!is.na(MOCA_RAW_SCORE) |
+                                             !is.na(MMSE_RAW_SCORE)), ]
 
 ## count participants
 n.mocammse <- length(unique(mocammse.nonmissing$GUID))
@@ -439,31 +463,31 @@ the distributions of each.
 
 ```{r get-last-visit-nps}
 ### Extract last visit NPS -- both case/control and severity measures
-npsvars.bin <- c(agitation = "agit", anxiety = "anx", apathy = "apa", delusion = "del",
-                 depression = "depd", disinhibition = "disn", hallucination = "hall",
-                 irritability = "irr", sleep = "nite")
-npsvars.sev <- paste0(npsvars.bin, "sev")
-names(npsvars.sev) <- names(npsvars.bin)
-
-fornps <- rbindlist(list(UDS1 = lastobs1[["UDS1"]][, c("GUID", "VISITYR", "VISITNUM", npsvars.bin, npsvars.sev), with = FALSE],
-                         UDS2 = lastobs1[["UDS2"]][, c("GUID", "VISITYR", "VISITNUM", npsvars.bin, npsvars.sev), with = FALSE],
-                         UDS3 = lastobs1[["UDS3"]][, c("GUID", "VISITYR", "VISITNUM", npsvars.bin, npsvars.sev), with = FALSE]),
+fornps <- rbindlist(list(UDS1 = lastobs1[["UDS1"]][, c("GUID", "VISITYR", "VISITNUM",
+                                                       npsvars.bin.9, npsvars.sev.9), with = FALSE],
+                         UDS2 = lastobs1[["UDS2"]][, c("GUID", "VISITYR", "VISITNUM",
+                                                       npsvars.bin.9, npsvars.sev.9), with = FALSE],
+                         UDS3 = lastobs1[["UDS3"]][, c("GUID", "VISITYR", "VISITNUM",
+                                                       npsvars.bin.9, npsvars.sev.9), with = FALSE]),
                    use.names = TRUE, fill = TRUE, idcol="pheset")
 
 
 ### Tabulate case/control status
 MakeNPSbintab <- function(dattab) {
     ## Tabulate
-    dist.nps.bin <- data.table(t(dattab[, sapply(.SD, function(x) { table(x, useNA = "always") }), .SDcol = npsvars.bin]))
-    dist.nps.bin[, nps:= npsvars.bin]
+    dist.nps.bin <- data.table(t(dattab[, sapply(.SD, function(x) { table(x, useNA = "always") }),
+                                        .SDcol = npsvars.bin.9]))
+    dist.nps.bin[, nps:= npsvars.bin.9]
     setnames(dist.nps.bin, c("0", "1", "V3"), c("no", "yes", "NA"))
-
+  
     ## Add readable NPS names 
-    dist.nps.bin <- merge(dist.nps.bin, data.table(NPS = names(npsvars.bin), nps = npsvars.bin), by = "nps")
+    dist.nps.bin <- merge(dist.nps.bin, data.table(NPS = names(npsvars.bin.9), nps = npsvars.bin.9),
+                          by = "nps")
 
     ## Add percent cases column
     ## Reorder rows and columns 
-    dist.nps.bin[, percent.cases := sapply((yes / (no + yes)*100), function(x) { paste0(sprintf("%.1f",x), "%") })]
+    dist.nps.bin[, percent.cases := sapply((yes / (no + yes)*100), function(x) {
+        paste0(sprintf("%.1f",x), "%") })]
     setcolorder(dist.nps.bin, c("nps", "NPS", "percent.cases"))
     setorder(dist.nps.bin, percent.cases)
     return(dist.nps.bin)
@@ -475,7 +499,7 @@ dist.nps.bin <- MakeNPSbintab(fornps)
 ### Tabulate severity status
 ## Save original severity variables with suffix .orig
 ## We are going to recode them from NA/1/2/3 to 0/1/2/3
-for(avar in npsvars.bin) {
+for(avar in npsvars.bin.9) {
     var.bin <- avar
     var.sev <- paste0(avar, "sev")
     fornps[, (paste0(var.sev, ".orig")) := get(var.sev)]
@@ -486,12 +510,14 @@ for(avar in npsvars.bin) {
 rm(avar)
 
 ## Tabulate
-dist.nps.sev <- data.table(t(fornps[, sapply(.SD, function(x) { table(x, useNA = "always") }), .SDcol = npsvars.sev]))
-dist.nps.sev[, nps:= npsvars.sev]
+dist.nps.sev <- data.table(t(fornps[, sapply(.SD, function(x) { table(x, useNA = "always") }),
+                                    .SDcol = npsvars.sev.9]))
+dist.nps.sev[, nps:= npsvars.sev.9]
 setnames(dist.nps.sev, c("V5"), c("NA"))
 
 ## Add readable NPS names 
-dist.nps.sev <- merge(dist.nps.sev, data.table(NPS = names(npsvars.sev), nps = npsvars.sev), by = "nps")
+dist.nps.sev <- merge(dist.nps.sev, data.table(NPS = names(npsvars.sev.9), nps = npsvars.sev.9),
+                      by = "nps")
 
 ## Reorder rows and columns 
 setcolorder(dist.nps.sev, c("nps", "NPS"))
@@ -510,14 +536,16 @@ had AD. These will be dropped from analysis. GUIDs:
 
 
 ```{r find.missing.all.nps}
-index.missing.all.nps <- apply(fornps[, c(npsvars.bin), with = FALSE], 1, function(x) { all(is.na(x)) })
+index.missing.all.nps <- apply(fornps[, c(npsvars.bin.9), with = FALSE], 1, function(x) { all(is.na(x)) })
 ids.missing.all.nps <- fornps[index.missing.all.nps, GUID]
 ids.missing.all.nps
 
 ```
 ```{r }
 dist.nps.bin.updated <- MakeNPSbintab(fornps[!GUID %in% ids.missing.all.nps, ])
-Mkable(dist.nps.bin.updated, caption = "Case/control distribution at last visit (after removing participants with all missing data).")
+Mkable(dist.nps.bin.updated,
+       caption = paste0("Case/control distribution at last visit ",
+                        "(after removing participants with all missing data)."))
 
 ```
 
@@ -528,11 +556,12 @@ ids.forana <- setdiff(ids$GUID, ids.missing.all.nps)
 ids.forana <- intersect(ids.forana, guids.in.nps)
 
 ### Assemble the variables of interest for those participants from the phenos file
-forprint0 <- fornps[, c("GUID", npsvars.bin, npsvars.sev), with = FALSE]
+forprint0 <- fornps[, c("GUID", npsvars.bin.9, npsvars.sev.9), with = FALSE]
 
 ### Merge in variables from proteomics file
 ids.sub <- ids[GUID %in% ids.forana, ]
-forprint1 <- merge(ids.sub[, !c("KX.", "channel", "batch", "WorkingID")], forprint0, by.x="GUID", by.y = "GUID")
+forprint1 <- merge(ids.sub[, !c("KX.", "channel", "batch", "WorkingID")], forprint0,
+                   by.x="GUID", by.y = "GUID")
 
 ```
 
@@ -544,7 +573,8 @@ the `r length(ids.forana)` participants to be included in the analysis.
 ```{r hist-covars, fig.height=6}
 par(mfrow=c(2,2))
 
-##PlotCategorical("GENDER_DESC", phenos.ana[["demographics"]]); title("from demographics table", line=0.5)
+##PlotCategorical("GENDER_DESC", phenos.ana[["demographics"]]);
+##title("from demographics table", line=0.5)
 PlotCategorical("msex", ids.sub)
 PlotCategorical("dx", fordx[GUID %in% ids.forana,], xsrt=45); title("at last visit", line = 0.5)
 PlotContinuous("age_death", ids.sub)
@@ -558,7 +588,9 @@ datecols <- c("DAY_SERVICE_DATE", "em_visit_date", "VISITYR", "VISITNUM")
 datecols <- c("em_visit_date", "VISITYR", "VISITNUM")
 
 forlong <- sapply(phesets2, function(aset) {
-    phenos[[aset]][GUID %in% ids.forana, intersect(c("GUID", datecols, npsvars.bin, npsvars.sev), names(phenos[[aset]])), with = FALSE]
+    phenos[[aset]][GUID %in% ids.forana,
+                   intersect(c("GUID", datecols, npsvars.bin.9, npsvars.sev.9), names(phenos[[aset]])),
+                   with = FALSE]
     }, simplify = FALSE)
 
 
@@ -566,6 +598,16 @@ nps.long.forprint0 <- rbindlist(forlong, idcol="pheset", fill = TRUE)
 setorder(nps.long.forprint0, GUID, VISITYR, VISITNUM)
 nps.long.forprint1 <- merge(ids.sub[, .(protsample, GUID)], nps.long.forprint0, by = "GUID")
 
+```
+
+```{r update-nps-variables}
+## Add collapsed psychosis variable -- last visit
+forprint1[(hall== 1 | del == 1), psych := 1]
+forprint1[(hall == 0 & del == 0), psych := 0]
+
+## Add collapsed psychosis variable -- longitudinal 
+nps.long.forprint1[(hall== 1 | del == 1), psych := 1]
+nps.long.forprint1[(hall == 0 & del == 0), psych := 0]
 
 ```
 
@@ -579,7 +621,8 @@ setorder(mocammse_long, SERVICE_DT)
 mocammse_last <- mocammse_long[, tail(.SD, 1), by = GUID]
 
 ## Add prefix labels to columns for each dataset
-setnames(mocammse_last, setdiff(names(mocammse_last), "GUID"), paste0("score_", setdiff(names(mocammse_last), "GUID")))
+setnames(mocammse_last, setdiff(names(mocammse_last), "GUID"),
+         paste0("score_", setdiff(names(mocammse_last), "GUID")))
 setnames(fordx, setdiff(names(fordx), "GUID"), paste0("UDS_", setdiff(names(fordx), "GUID")))
 
 
