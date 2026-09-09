@@ -26,6 +26,7 @@ options(stringsAsFactors = FALSE)
 
 ```{r constants}
 sourceset <- "emory"
+
 ## Define nps variable names -- all 9 domains
 npsvars.bin.9 <- c(agitation = "agit", anxiety = "anx", apathy = "apa", delusion = "del",
                  depression = "depd", disinhibition = "disn", hallucination = "hall",

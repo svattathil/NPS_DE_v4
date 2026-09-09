@@ -10,12 +10,27 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 ###### SETUP ######
 ### Constants
 options(stringsAsFactors = FALSE)
-npsvars.bin <- c(agitation = "agit", anxiety = "anx", apathy = "apa", delusion = "del",
+
+sourceset <- "Rush"
+
+
+## Define nps variable names -- all 9 domains
+npsvars.bin.9 <- c(agitation = "agit", anxiety = "anx", apathy = "apa", delusion = "del",
                  depression = "depd", disinhibition = "disn", hallucination = "hall",
                  irritability = "irr", sleep = "nite")
 
+npsvars.sev.9 <- paste0(npsvars.bin.9, "sev")
+names(npsvars.sev.9) <- names(npsvars.bin.9)
 
-sourceset <- "Rush"
+## Define nps variable names -- combine hall/del and drop disn
+npsvars.bin.7 <- c(agitation = "agit", anxiety = "anx", apathy = "apa",
+                 depression = "depd", irritability = "irr", psychosis = "psych",
+                  sleep = "nite")
+
+npsvars.sev.7 <- paste0(npsvars.bin.7, "sev")
+names(npsvars.sev.7) <- names(npsvars.bin.7)
+
+
 ### Map each dataset to the variable set that it uses
 ### Note the rad201_v1 and _v2 use the same variables, but have different variable codings!
 varsets <- data.frame(matrix(c("rad201", "rad201_v1",
@@ -268,7 +283,7 @@ formerge <- lapply(names(sumscores.list), function(anps) {
 npsobs <- Reduce(function(x,y) { merge(x, y, by = "projid") }, formerge)
 
 ## Update NPS names
-setnames(npsobs, names(npsvars.bin), npsvars.bin)
+setnames(npsobs, names(npsvars.bin.9), npsvars.bin.9)
 
 ## Add Braak score
 phenos.forprint <- merge(phenos.ana[["Wingo_Data"]][, .(projid, braaksc)], npsobs,
@@ -279,8 +294,16 @@ phenos.forprint <- merge(ids[, .(ID, protsample, Batch, age_death, msex, pmi)], 
                          by.x="ID", by.y = "projid")
 
 
+
+### Add psychosis variable
+phenos.forprint[hall == 1 | del == 1, psych := 1]
+phenos.forprint[hall == 0 & del == 0, psych := 0]
+phenos.forprint[hall == 0 & is.na(del), psych := 0]
+phenos.forprint[del == 0 & is.na(hall), psych := 0]
+
+
 ### Do some checks - These don't directly contribute to the case definitions ###
-### But they help guide and inter
+### But they help guide and interpret
 ### Visualize
 pdf(out.hists, height = 7, width = 7)
 par(mfrow=c(3,3), oma = c(0,0,2,0))
