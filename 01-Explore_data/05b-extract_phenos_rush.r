@@ -39,7 +39,7 @@ files.phenos <-paste0(filedir, "Phenotypes/Rush/", phesets, ".txt")
 file.ids <- "2_Pipeline/01-Explore_data/ids_pcafiltered.txt"
 
 ## File with selected variables and assigned NPS that we assembled manualy
-file.selectedvars <- "0_Data/Rush_variables/rush_variables_selected_grouped_set3.txt"
+file.selectedvars <- "0_Data/Rush_variables/rush_variables_selected_grouped_set4.txt"
 
 
 ### Files to be created
@@ -48,6 +48,8 @@ outdir <- "2_Pipeline/01-Explore_data/"
 out.cleanedphenos <- paste0(outdir, "phenos_cleaned_", tolower(sourceset), ".txt")
 out.caserates <- paste0(outdir, "rush_caserates", ".txt")
 out.hists <- paste0(outdir, "rush_composite_score_distributions.pdf")
+out.check_long_del_disn <- paste0(outdir, "rush_check_long_del_disn.txt")
+
 
 ###### MAIN ######
 ### Read in data
@@ -59,13 +61,11 @@ selectedvars <- fread(file.selectedvars)
 
 
 ### Prepare data
-### Drop the one variable that is reverse coded
+## Drop the one variable that is reverse coded
 selectedvars <- copy(selectedvars[is.na(reverse), ])
-
 
 ## Extract ids for this source
 ids <- ids.all[source=="Rush", ]
-
 ids[, ID := as.integer(ID)]
 
 ## For radintr variables, replace "NULL" text string with NA and convert to integer
@@ -75,19 +75,26 @@ phenos[["radintr"]][, colnames(phenos[["radintr"]]) := lapply(.SD, function(x) {
     x[x=="NULL"] <- NA; return(as.integer(x))  })]
 
 
+## Change case of selectedvars to match phenotype data
+selectedvars[, label_201 := tolower(label_201)]
+selectedvars[, label_20x := tolower(label_20x)]
+
 ### Extract phenotypes for selected variables for samples that passed QC
 phenos.ana <- sapply(1:nrow(varsets), function(i) {
+    cat("varset ", i, "\n") ## for TEST
+
     ## define current variable set and pheset
     varset <- varsets[i, varset]
     pheset <- varsets[i, pheset]
 
-    ## Extract selected vars from table. These were selected based on the codebook
-    ## And then extract the ones that are actually in the dataset
-    vars.selected <- selectedvars[, get(paste0("label_", varset))]
+    ## 1. Identify selected vars from table. These were selected based on the codebook
+    ## 2. Identify the ones that are actually in the dataset
+    ## 3. Count number of missing variables
+    ##    Make sure NA is not counted
+    labelcol <- paste0("label_", gsub("rad", "", varset))
+    vars.selected <- selectedvars[, get(labelcol)]
     vars.found <- intersect(vars.selected, names(phenos[[pheset]]))
 
-    ## Count number of missing variables
-    ## Make sure NA is not counted
     vars.missing <- setdiff(setdiff(vars.selected, names(phenos[[pheset]])), NA)
     print(paste0("missing ", length(vars.missing), " variables: ",
                  paste0(vars.missing, collapse=", ")))
@@ -104,14 +111,14 @@ phenos.ana <- sapply(1:nrow(varsets), function(i) {
     ## Rename with label from rad20x dataset, so all phesets will have the same columns
     if(varset != "rad20x") {
         ## Extract the two sets of labels
-        labelmap <- selectedvars[, c("label_rad20x", paste0("label_", varset)), with = FALSE]
-        setnames(labelmap, paste0("label_", varset), "oldlabel")
+        labelmap <- selectedvars[, c("label_20x", labelcol), with = FALSE]
+        setnames(labelmap, labelcol, "oldlabel")
 
         ## Filter to variables that were found or filled in with NAs
         labelmap <- labelmap[oldlabel %in% names(toreturn), ]
 
         ## Replace names
-        setnames(toreturn, labelmap$oldlabel, labelmap$label_rad20x)
+        setnames(toreturn, labelmap$oldlabel, labelmap$label_20x)
     }
 
     ## Sort by age_int
@@ -148,8 +155,10 @@ phenos.ana[[apheset]][, c(varcols[[apheset]]) := lapply(.SD, Recode, oldvals=c(2
 ## Also, variable apathy2 had slightly different wording here
 ## and should be recoded from c(1,2)=No/3=Yes
 apheset <- "radintr"
-phenos.ana[[apheset]][apathy2 %in% c(1,2), apathy2 := 0]
-phenos.ana[[apheset]][apathy2 %in% c(3), apathy2 := 1]
+if("apathy2" %in% names(phenos.ana[[apheset]])) {
+    phenos.ana[[apheset]][apathy2 %in% c(1,2), apathy2 := 0]
+    phenos.ana[[apheset]][apathy2 %in% c(3), apathy2 := 1]
+}
 phenos.ana[[apheset]][, c(varcols[[apheset]]) := lapply(.SD, Recode, oldvals=c(2), newval=0),
                       .SDcol = varcols[[apheset]]]
 
@@ -189,7 +198,7 @@ if(length(vars.complete.missing.todrop) >0) {
 ### Split observations into one table per NPS
 lastobs1.bynps <- sapply(unique(selectedvars$NPS), function(anps) {
     ## Have to account for the variables that were dropped due to complete missingness
-    vars.tokeep <- setdiff(selectedvars[NPS == anps, label_rad20x], vars.complete.missing.todrop)
+    vars.tokeep <- setdiff(selectedvars[NPS == anps, label_20x], vars.complete.missing.todrop)
     print(paste0("keep ", length(vars.tokeep), " vars for ", anps))
     lastobs1[, c("projid", "age_int", "pheset", vars.tokeep), with = FALSE]
 }, simplify = FALSE)
@@ -218,55 +227,6 @@ sumscores.list <- sapply(lastobs1.bynps, function(x) {
 }, simplify = FALSE)
 
 
-### Visualize
-pdf(out.hists, height = 7, width = 7)
-par(mfrow=c(3,3), oma = c(0,0,2,0))
-
-invisible(sapply(names(sumscores.list), function(anps) {
-    toplot <- sumscores.list[[anps]]$sumscore
-    hist(toplot, breaks=50, col="purple2",
-         main = anps,
-         xlab = paste0("Sum of ", nvars[anps], " variables"))
-    mtext(paste0("nmissing = ", sum(is.na(toplot))), side=3, line=0.2, cex=0.8)
-}))
-title(paste0("Sum of scores per NPS for ", nrow(lastobs1), " participants"),
-      outer = TRUE, line = 0)
-
-
-invisible(sapply(names(sumscores.list), function(anps) {
-    toplot <- sumscores.list[[anps]]$meanscore
-    hist(toplot, breaks=50, col="orange4",
-         main = anps,
-         xlab = paste0("Mean of ", nvars[anps], " variables"))
-    mtext(paste0("nmissing = ", sum(is.na(toplot))), side=3, line=0.2, cex=0.8)
-}))
-title(paste0("Mean score per NPS for ", nrow(lastobs1), " participants"), outer = TRUE, line = 0)
-dev.off()
-
-
-### Check missing rate by pheset for the variables for the two NPS with the highest missing rate
-## Check delusion items
-sapply(setdiff(names(lastobs1.bynps[["delusion"]]), c("projid", "age_int", "pheset")),
-       function(itemx) {
-    lastobs1.bynps[["delusion"]][, mean(is.na(get(itemx))), by = "pheset"]
-}, simplify = FALSE)
-
-
-## Check disinhibition items
-sapply(setdiff(names(lastobs1.bynps[["disinhibition"]]), c("projid", "age_int", "pheset")),
-       function(itemx) {
-    lastobs1.bynps[["disinhibition"]][, mean(is.na(get(itemx))), by = "pheset"]
-}, simplify = FALSE)
-
-
-### Check distribution for each item used for apathy
-apathy_items <- selectedvars[NPS == "apathy", label_rad20x]
-
-tab_apathy_items <- lastobs1.bynps$apathy[, ..apathy_items] |>
-apply(X = _, MARGIN = 2, FUN = table, useNA = "ifany") |>
-addmargins(A = _, margin = 1)
-
-
 ### Calculate case/control rates
 ## Define score threshold
 ## Participants with scores higher than this will be classified as cases
@@ -276,14 +236,14 @@ for(anps in names(sumscores.list)) {
     sumscores.list[[anps]][, c(anps) := ifelse(meanscore > meanthresh, 1, 0)]
 }
 
+if(0) {
+    ## For apathy, instead of using a threshold, we're going to split based on a percentile
+    percentilethresh <- 0.3
+    p30 <- quantile(sumscores.list[["apathy"]]$meanscore, na.rm=TRUE, probs=percentilethresh)
 
-## For apathy, instead of using a threshold, we're going to split based on a percentile
-percentilethresh <- 0.3
-p30 <- quantile(sumscores.list[["apathy"]]$meanscore, na.rm=TRUE, probs=percentilethresh)
-
-sumscores.list[["apathy"]][, apathy := NA]
-sumscores.list[["apathy"]][, apathy := ifelse(meanscore <= p30, 0, 1)]
-
+    sumscores.list[["apathy"]][, apathy := NA]
+    sumscores.list[["apathy"]][, apathy := ifelse(meanscore <= p30, 0, 1)]
+}
 
 caserates <- data.frame(t(sapply(names(sumscores.list), function(anps) {
     return(c(
@@ -318,6 +278,72 @@ phenos.forprint <- merge(phenos.ana[["Wingo_Data"]][, .(projid, braaksc)], npsob
 phenos.forprint <- merge(ids[, .(ID, protsample, Batch, age_death, msex, pmi)], phenos.forprint,
                          by.x="ID", by.y = "projid")
 
+
+### Do some checks - These don't directly contribute to the case definitions ###
+### But they help guide and inter
+### Visualize
+pdf(out.hists, height = 7, width = 7)
+par(mfrow=c(3,3), oma = c(0,0,2,0))
+
+invisible(sapply(names(sumscores.list), function(anps) {
+    toplot <- sumscores.list[[anps]]$sumscore
+    hist(toplot, breaks=50, col="purple2",
+         main = anps,
+         xlab = paste0("Sum of ", nvars[anps], " variables"))
+    mtext(paste0("nmissing = ", sum(is.na(toplot))), side=3, line=0.2, cex=0.8)
+}))
+title(paste0("Sum of scores per NPS for ", nrow(lastobs1), " participants"),
+      outer = TRUE, line = 0)
+
+
+invisible(sapply(names(sumscores.list), function(anps) {
+    toplot <- sumscores.list[[anps]]$meanscore
+    hist(toplot, breaks=50, col="orange4",
+         main = anps,
+         xlab = paste0("Mean of ", nvars[anps], " variables"))
+    mtext(paste0("nmissing = ", sum(is.na(toplot))), side=3, line=0.2, cex=0.8)
+}))
+title(paste0("Mean score per NPS for ", nrow(lastobs1), " participants"), outer = TRUE, line = 0)
+dev.off()
+
+
+### Check missing rate by pheset for the variables for the two NPS with the high missing rate
+## Check delusion items
+sapply(setdiff(names(lastobs1.bynps[["delusion"]]), c("projid", "age_int", "pheset")),
+       function(itemx) {
+    lastobs1.bynps[["delusion"]][, mean(is.na(get(itemx))), by = "pheset"]
+}, simplify = FALSE)
+
+
+## Check disinhibition items
+sapply(setdiff(names(lastobs1.bynps[["disinhibition"]]), c("projid", "age_int", "pheset")),
+       function(itemx) {
+    lastobs1.bynps[["disinhibition"]][, mean(is.na(get(itemx))), by = "pheset"]
+}, simplify = FALSE)
+
+
+### Extract long obs for the items for the two NPS with the high missing rate
+## Add the value for our derived last-visit variable
+forcheck_long_del_disn <- mergedvars[, c("projid", "age_int", "pheset",
+                                         selectedvars[NPS %in% c("delusion", "disinhibition"), label_20x]),
+                                     with = FALSE]
+forcheck_long_del_disn <- merge(npsobs[, .(projid, del, disn)], forcheck_long_del_disn, by = "projid")
+setorder(forcheck_long_del_disn, "projid", "age_int")
+
+### Check distribution for each item used for apathy
+apathy_items <- selectedvars[NPS == "apathy", label_20x]
+
+tab_apathy_items <- lastobs1.bynps$apathy[, ..apathy_items] |>
+apply(X = _, MARGIN = 2, FUN = table, useNA = "ifany") |>
+addmargins(A = _, margin = 1)
+
+
+
+
 ###### FINISH ######
-write.table(caserates, file = out.caserates, row.names = FALSE, quote = FALSE, sep = "\t")
-write.table(phenos.forprint, file = out.cleanedphenos, row.names = FALSE, quote = FALSE, sep = "\t")
+write.table(caserates, file = out.caserates,
+            row.names = FALSE, quote = FALSE, sep = "\t")
+write.table(phenos.forprint, file = out.cleanedphenos,
+            row.names = FALSE, quote = FALSE, sep = "\t")
+write.table(forcheck_long_del_disn, file = out.check_long_del_disn,
+            row.names = FALSE, quote = FALSE, sep = "\t")
