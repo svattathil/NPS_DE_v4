@@ -19,14 +19,14 @@ library(sva)
 library(qvalue)
 
 source("~/comsv/Svattathil_Library/svattathil_functions.r")
-source("1_Code/project_constants.r")
 
 ### CONSTANTS
 options(stringsAsFactors = FALSE)
+source("1_Code/project_constants.r")
+max_missing <- 0.5  ## max missing fraction allowed for proteins
 
 covars <- c("Batch", "pmi", "age_death", "msex") ## SVs will be added on the fly
 fac_covars <- c("Batch")  ## will be set as a factor
-max_missing <- 0.5  ## max missing fraction allowed for proteins
 
 
 ### FUNCTIONS ###
@@ -34,17 +34,23 @@ source("1_Code/03-Run_regressions/01asub-limma_nps_DE_functions.r")
 
 
 ### Command line interface
-parser <- ArgumentParser(
-  description = "limma DE of log2 protein abundance on NPS domains"
-)
+parser <- ArgumentParser(description = "limma DE of log2 protein abundance on NPS domains")
+
+## Control model and sample set
 parser$add_argument("--cohort", default = "OHSU",
                     help = "Cohort label used in output file names.")
+parser$add_argument("--min-group", dest = "min_group", type = "integer", default = 5L,
+                    help = "Minimum cases and controls per domain [5].")
+
+
+## Control limma
 parser$add_argument("--robust", action = "store_true", default = TRUE,
                     help = "Use eBayes(robust = TRUE).")
 parser$add_argument("--trend", action = "store_true", default = FALSE,
                     help = "Use eBayes(trend = TRUE).")
-parser$add_argument("--min-group", dest = "min_group", type = "integer", default = 5L,
-                    help = "Minimum cases and controls per domain [5].")
+
+
+## Other controls
 parser$add_argument("--no-diagnostics", dest = "no_diagnostics", action = "store_true", default = FALSE,
                     help = "Skip per-domain p-value / plotSA diagnostics.")
 parser$add_argument("--plot-width", dest = "plot_width", type = "double", default = 11,
@@ -61,8 +67,7 @@ set.seed(args$seed)
 
 ### Files that exist
 infiles <- list(
-    phenos = paste0("2_Pipeline/02-Prepare_analysis_data/phenos_cleaned_SVs_",
-                    args$cohort, ".txt"),
+    phenos = paste0("2_Pipeline/02-Prepare_analysis_data/phenos_cleaned_SVs_", args$cohort, ".txt"),
     prot = "2_Pipeline/01-Explore_data/prot.pcafiltered.log2norm.txt"
 )
 
@@ -90,20 +95,20 @@ outfiles[["SA_plot"]] <- function(adomain) {
 
 
 ### MAIN ###
-### 1. Read data
+### Read data
 pheno <- fread(infiles$pheno)
 prot <- fread(infiles$prot)
 
+
+### Prepare data
 sample_id_col <- "protsample"
 protein_id_col <- names(prot)[1]
 
-### Remove any existing SV columns
+## Remove any existing SV columns
 pheno.orig <- copy(pheno)
 oldsvs <- grep("SV", names(pheno.orig), value = TRUE)
 pheno[, (oldsvs) := NULL]
 
-
-### 2. Align samples and filter
 expr_all <- as.matrix(prot[, !protein_id_col, with = FALSE])
 rownames(expr_all) <- as.character(prot[[protein_id_col]])
 storage.mode(expr_all) <- "double"
@@ -111,6 +116,8 @@ storage.mode(expr_all) <- "double"
 pheno[, (sample_id_col) := as.character(get(sample_id_col))]
 setkeyv(pheno, sample_id_col)
 
+
+### Align samples between expression and phenos
 shared <- intersect(colnames(expr_all), pheno[[sample_id_col]])
 if (length(shared) == 0L) {
   stop("No sample IDs shared between --pheno and --prot.")
@@ -121,18 +128,16 @@ expr_all <- expr_all[, shared, drop = FALSE]
 pdat     <- pheno[J(shared)]                 # reordered to match columns
 stopifnot(identical(as.character(pdat[[sample_id_col]]), colnames(expr_all)))
 
+## Set covars as factors as necessary
 for (nm in fac_covars) pdat[, (nm) := factor(get(nm))]
 
 
 ### limma drops samples with missing covariates from every protein, so
-### remove them once, up front, and report the count.
-covar_ok <- pdat[, Reduce(`&`, lapply(.SD, function(v) !is.na(v))),
-                 .SDcols = covars]
-nps_any  <- pdat[, Reduce(`|`, lapply(.SD, function(v) !is.na(v))),
-                 .SDcols = npsvars.bin]
+### remove them once, up front, and report the count
+covar_ok <- pdat[, Reduce(`&`, lapply(.SD, function(v) !is.na(v))), .SDcols = covars]
+nps_any  <- pdat[, Reduce(`|`, lapply(.SD, function(v) !is.na(v))), .SDcols = npsvars.bin]
 keep_samp <- covar_ok & nps_any
-message("Samples dropped (missing covariate or no NPS observation): ",
-        sum(!keep_samp))
+message("Samples dropped (missing covariate or no NPS observation): ", sum(!keep_samp))
 
 expr_all <- expr_all[, keep_samp, drop = FALSE]
 pdat     <- pdat[keep_samp]
