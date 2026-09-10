@@ -19,6 +19,7 @@ library(sva)
 library(qvalue)
 
 source("~/comsv/Svattathil_Library/svattathil_functions.r")
+source("~/comsv/Svattathil_Library/manhattan_and_qq_plot_functions.r")
 
 ### CONSTANTS
 options(stringsAsFactors = FALSE)
@@ -71,9 +72,12 @@ infiles <- list(
     prot = "2_Pipeline/01-Explore_data/prot.pcafiltered.log2norm.txt"
 )
 
+## code to run joint model for conditional and joint F test (for basic run only)
+script_run_basic_joint <- "1_Code/03-Run_regressions/01asub-run_basic_joint.r"
+
 
 ### Files to be created
-outdir <- "2_Pipeline/03-Run_regressions_limma/Prot_perDomain/"
+outdir <- "2_Pipeline/03-Run_regressions/Prot_perDomain/"
 MyMkdir(outdir)
 
 diag_dir <-  "Diagnostics/"
@@ -265,86 +269,7 @@ if (!args$no_diagnostics) {
     }
 }
 
-
-### 4. Analysis B: joint model with all NPS domains as predictors
-## Estimates each domain's effect conditional on the others; the moderated F over
-## all NPS coefficients is the joint "any domain" test.
-message("=== Joint model")
-### The test requires complete data for all NPS
-complete_nps <- pdat[, Reduce(`&`, lapply(.SD, function(v) !is.na(v))),
-                     .SDcols = npsvars.bin]
-sub_j     <- pdat[complete_nps]
-samples_j <- sub_j[[sample_id_col]]
-message("Samples with complete data on all ", length(npsvars.bin),
-        " domains: ", length(samples_j))
-
-### Get some info
-case_counts <- vapply(as.character(npsvars.bin), function(d) sum(sub_j[[d]]), numeric(1))
-print(data.table(domain = npsvars.bin,
-                 n_cases = case_counts,
-                 n_controls = length(samples_j) - case_counts))
-
-dom_j <- names(case_counts)[case_counts >= args$min_group &
-                              (length(samples_j) - case_counts) >=
-                              args$min_group]
-dropped <- setdiff(npsvars.bin, dom_j)
-if (length(dropped) > 0L) {
-  message("Domains dropped from joint model: ",
-          paste(dropped, collapse = ", "))
-}
-
-### Estimate SVs and define model
-edat_j   <- expr[, samples_j, drop = FALSE]
-sv_j     <- Estimate_svs(dom_j, sub_j, samples_j)
-design_j <- Build_design(dom_j, covars, sub_j, samples_j, sv_j)
-
-nps_coefs <- intersect(make.names(dom_j), colnames(design_j))
-message("NPS coefficients in joint model: ",
-        paste(nps_coefs, collapse = ", "))
-
-## Correlated NPS domains can make the design rank deficient
-qr_rank <- qr(design_j)$rank
-if (qr_rank < ncol(design_j)) {
-    warning("Joint design is rank deficient (rank ", qr_rank, " < ",
-            ncol(design_j), "); check collinearity among NPS domains.")
-}
-
-fit_j <- Fit_limma(edat_j, design_j)
-
-
-### Extract conditionally independent per-domain effects
-joint_per_domain <- lapply(nps_coefs, function(cf) {
-    topTable(fit_j, coef = cf, number = Inf, sort.by = "none") |>
-    as.data.table(keep.rownames = "protein") |>
-    Annotate_result(domain = cf,
-                    cohort = args$cohort,
-                    model = "joint",
-                    n_samples = length(samples_j),
-                    n_svs = if (is.null(sv_j)) 0L else ncol(sv_j))
-}) |>
-rbindlist(use.names = TRUE, fill = TRUE)
-setorder(joint_per_domain, domain, P.Value)
-joint_per_domain[fdr < 0.05, sig.qvalue05 := "sig"]
-
-fwrite(joint_per_domain, file.path(outdir, outfiles$joint_per_domain), sep = "\t")
-
-
-### Extract moderated F across all NPS coefficients
-joint_F <- topTable(fit_j, coef = nps_coefs, number = Inf,
-                    sort.by = "none") |>
-as.data.table(keep.rownames = "protein") |>
-Annotate_result(cohort = args$cohort,
-                model = "joint_F",
-                n_domains = length(nps_coefs),
-                n_samples = length(samples_j))
-setorder(joint_F, P.Value)
-joint_F[fdr < 0.05, sig.qvalue := "sig"]
-
-message("Joint F-test proteins at FDR < 0.05: ", joint_F[fdr < 0.05, .N])
-
-
-
-### 5. Run summary
+### Assemble summary
 summary_dt <- per_domain_dt[, .(n_proteins = .N,
                                 n_fdr05 = sum(fdr < 0.05, na.rm = TRUE),
                                 n_samples = n_samples[1],
@@ -354,39 +279,24 @@ summary_dt <- per_domain_dt[, .(n_proteins = .N,
 print(summary_dt)
 
 
-writeLines(capture.output(sessionInfo()), file.path(outdir, outfiles$session_info))
+
+if(args$run == "basic") {
+source(script_run_basic_joint)
+}
+
 message("Done.")
 
 
-
 ### FINISH ###
+## Write results to files
 fwrite(per_domain_dt, file.path(outdir, outfiles$limma_per_domain), sep = "\t")
 fwrite(summary_dt, file.path(outdir, outfiles$summary_dt), sep = "\t")
 
-fwrite(joint_F, file.path(outdir, outfiles$joint_ftest), sep = "\t")
+if(args$run == "basic") {
+    fwrite(joint_per_domain, file.path(outdir, outfiles$joint_per_domain), sep = "\t")
+    fwrite(joint_F, file.path(outdir, outfiles$joint_ftest), sep = "\t")
+}
 
 if (!args$no_diagnostics) {
     fwrite(diag_dt, file.path(outdir, outfiles$diagnostics), sep = "\t")
-}
-
-
-
-
-
-########################################################################
-### Code used for exploration
-if(0) {
-## Check missingness v. batch
-## This was in response to the warning about 'Partial NA coefficients for XX probes'
-    any_missing_logi <- apply(expr, 1, function(x) { any(is.na(x)) } )
-
-any_missing_prots <- names(any_missing_logi)[any_issing_logi]
-
-formerge <- as.data.table(t(expr[any_missing_prots, ]), keep.rownames = "protsample")
-merged <- merge(pdat, formerge, by = "protsample")
-
-tabres <- sapply(any_missing_prots, function(aprot) { table(!is.na(merged[, get(aprot)]), merged$Batch) },
-                 simplify = FALSE)
-
-check_missing <- sapply(tabres, function(x) { any(x["TRUE", ] == 0) } )
 }
