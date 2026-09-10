@@ -50,9 +50,8 @@ outdir <- "2_Pipeline/02-Prepare_analysis_data/"
 MyMkdir(outdir)
 outfiles <- list(
     out.phenos.svs = paste0(outdir, "/phenos_cleaned_svs_", args$cohort, ".txt"),
-    out.resid = paste0(outdir, "/resid_regress",
-                                    covarstring, "_", args$cohort, ".txt"),
-    out.log = paste0(outdir, "/", args$cohort, ".log"))
+    out.resid = paste0(outdir, "/resid_regress_covars_", args$cohort, ".txt"),
+    out.log = paste0(outdir, "/", "data_cleaning_", args$cohort, ".log"))
 
 
 ###### MAIN ######
