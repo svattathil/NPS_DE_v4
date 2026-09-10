@@ -38,10 +38,10 @@ source("1_Code/03-Run_regressions/01asub-limma_nps_DE_functions.r")
 parser <- ArgumentParser(description = "limma DE of log2 protein abundance on NPS domains")
 
 ## Control model and sample set
+parser$add_argument("--run", default = "basic",
+                    help = "Specify the run.")
 parser$add_argument("--cohort", default = "OHSU",
                     help = "Cohort label used in output file names.")
-parser$add_argument("--min-group", dest = "min_group", type = "integer", default = 5L,
-                    help = "Minimum cases and controls per domain [5].")
 
 
 ## Control limma
@@ -174,14 +174,6 @@ for (dom in npsvars.bin) {
     message("=== Per-domain model: ", dom)
     sub_pdat <- pdat[!is.na(get(dom))]   ## subset of donors with non-missing NPS for this domain
     samples <- sub_pdat[[sample_id_col]]
-    n_case <- sum(sub_pdat[[dom]])
-    n_ctrl <- length(samples) - n_case
-    message("  n = ", length(samples), " (cases = ", n_case, ", controls = ", n_ctrl, ")")
-
-    if (n_case < args$min_group || n_ctrl < args$min_group) {
-        warning("Fewer than ", args$min_group, " cases or controls for ", dom, "; skipping.")
-        next
-    }
 
     edat <- expr[, samples, drop = FALSE]
 
@@ -213,9 +205,7 @@ for (dom in npsvars.bin) {
     Annotate_result(dt = res,
                     domain = dom,
                     cohort = args$cohort,
-                    model = "per_domain",
                     n_samples = length(samples),
-                    n_cases = n_case,
                     n_svs = if (is.null(sv)) 0L else ncol(sv))
     setorder(res, P.Value)
 
@@ -228,10 +218,9 @@ for (dom in npsvars.bin) {
     ## Run diagnostics and draw plot to file
     if (!args$no_diagnostics) {
         diag_list[[dom]] <- Pvalue_diagnostics(fit, res[["P.Value"]], dom,
-                                               length(samples), n_case,
-                                               n_svs_used)
+                                               length(samples), n_svs_used)
         Write_diagnostic_plot(
-            fit, res[["P.Value"]], dom, length(samples), n_case, n_svs_used,
+            fit, res[["P.Value"]], dom, length(samples), n_svs_used,
             outfiles$SA_plot(dom)
         )
         message("  diagnostics: prop p < 0.05 = ",
@@ -248,7 +237,6 @@ setcolorder(per_domain_dt, c("cohort", "domain", "protein", "logFC", "CI.L", "CI
                              "SE_unmod", "SE_mod",
                              "AveExpr", "t",
                              "P.Value", "fdr"))
-per_domain_dt[, model := NULL] ## remove extra column
 
 
 ### Gather diagnostics across domains
@@ -273,15 +261,13 @@ if (!args$no_diagnostics) {
 summary_dt <- per_domain_dt[, .(n_proteins = .N,
                                 n_fdr05 = sum(fdr < 0.05, na.rm = TRUE),
                                 n_samples = n_samples[1],
-                                n_cases = n_cases[1],
                                 n_svs = n_svs[1]),
                             by = .(cohort, domain)]
 print(summary_dt)
 
-
-
+### Run joint model (basic run only)
 if(args$run == "basic") {
-source(script_run_basic_joint)
+    source(script_run_basic_joint)
 }
 
 message("Done.")

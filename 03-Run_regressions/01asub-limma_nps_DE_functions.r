@@ -46,7 +46,7 @@ Fit_limma <- function(edat, design) {
 
 Estimate_svs <- function(protected_vars, pheno_dt, sample_ids) {
   nullmodel <- paste("~", paste(covars, collapse = " + "))
-  fullmodel <- paste("~", paste(c(protected_vars, covars), collapse = " + "))
+  fullmodel <- paste("~", paste(c(covars, protected_vars), collapse = " + "))
   message("  SVA null model: ", nullmodel)
   message("  SVA full model: ", fullmodel)
 
@@ -82,7 +82,7 @@ Estimate_pi0 <- function(p) {
 }
 
 
-Pvalue_diagnostics <- function(fit, p, domain, n_samples, n_cases, n_svs) {
+Pvalue_diagnostics <- function(fit, p, domain, n_samples, n_svs) {
     ## Reported numerically per domain: the proportion of p < 0.05, the
     ## observed/expected ratio at p < 0.05 (1 under the null), the Storey pi0
     ## estimate (proportion of true nulls), and limma's prior degrees of
@@ -93,13 +93,11 @@ Pvalue_diagnostics <- function(fit, p, domain, n_samples, n_cases, n_svs) {
     data.table(
         cohort          = args$cohort,
         domain          = domain,
-        model           = "per_domain",
         n_samples       = n_samples,
-    n_cases         = n_cases,
-    n_svs           = n_svs,
-    n_proteins      = length(p),
-    prop_p_lessthan_05    = mean(p < 0.05),
-    obs_exp_p_lessthan_05 = mean(p < 0.05) / 0.05,
+    n_svs               = n_svs,
+    n_proteins          = length(p),
+    prop_p_lessthan_05     = mean(p < 0.05),
+    obs_exp_p_lessthan_05  = mean(p < 0.05) / 0.05,
     prop_p_lesstthan_001   = mean(p < 0.001),
     median_p        = median(p),
     ks_unif_p       = tryCatch(suppressWarnings(ks.test(p, "punif")$p.value),
@@ -114,8 +112,7 @@ Pvalue_diagnostics <- function(fit, p, domain, n_samples, n_cases, n_svs) {
 
 
 
-Write_diagnostic_plot <- function(fit, p, domain, n_samples, n_cases,
-                                  n_svs, path) {
+Write_diagnostic_plot <- function(fit, p, domain, n_samples, n_svs, path) {
     ## Write a single two-panel PNG per domain: p-value histogram (left) and
 ## plotSA (right).
 ## plotSA =  limma's residual standard deviation versus average
@@ -136,8 +133,8 @@ Write_diagnostic_plot <- function(fit, p, domain, n_samples, n_cases,
   hist(p_ok, breaks = seq(0, 1, by = 0.02), col = "grey80", border = "white",
        xlab = "unadjusted p-value", ylab = "number of proteins",
        main = paste0(args$cohort, ": ", domain, "\n",
-                     "n = ", n_samples, " (cases = ", n_cases,
-                     "), SVs = ", n_svs))
+                     "n = ", n_samples,
+                     ", SVs = ", n_svs))
   abline(h = length(p_ok) * 0.02, col = "red", lty = 2, lwd = 1.5)
   legend("topright", bty = "n", lty = 2, col = "red", lwd = 1.5,
          legend = "uniform (null) expectation", cex = 0.85)
