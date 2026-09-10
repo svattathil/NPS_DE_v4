@@ -45,8 +45,6 @@ Fit_limma <- function(edat, design) {
 }
 
 Estimate_svs <- function(protected_vars, pheno_dt, sample_ids) {
-  if (identical(args$n_sv, 0L)) return(NULL)
-
   nullmodel <- paste("~", paste(covars, collapse = " + "))
   fullmodel <- paste("~", paste(c(protected_vars, covars), collapse = " + "))
   message("  SVA null model: ", nullmodel)
@@ -61,7 +59,7 @@ Estimate_svs <- function(protected_vars, pheno_dt, sample_ids) {
     return(NULL)
   }
 
-  n_sv <- if (args$n_sv > 0L) args$n_sv else num.sv(edat, mod, method = "be")
+  n_sv <- num.sv(edat, mod, method = "be")
   if (n_sv < 1L) {
     message("  no surrogate variables estimated")
     return(NULL)

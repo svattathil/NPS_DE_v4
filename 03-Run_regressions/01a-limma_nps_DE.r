@@ -39,26 +39,19 @@ parser <- ArgumentParser(
 )
 parser$add_argument("--cohort", default = "OHSU",
                     help = "Cohort label used in output file names.")
-parser$add_argument("--n-sv", dest = "n_sv", type = "integer", default = -1L,
-                    help = paste("Surrogate variables: -1 = estimate with",
-                                 "num.sv(); 0 = no SVA; k = force k SVs."))
 parser$add_argument("--robust", action = "store_true", default = TRUE,
                     help = "Use eBayes(robust = TRUE).")
 parser$add_argument("--trend", action = "store_true", default = FALSE,
                     help = "Use eBayes(trend = TRUE).")
-parser$add_argument("--min-group", dest = "min_group", type = "integer",
-                    default = 5L,
+parser$add_argument("--min-group", dest = "min_group", type = "integer", default = 5L,
                     help = "Minimum cases and controls per domain [5].")
-parser$add_argument("--seed", type = "integer", default = 20260101L)
-parser$add_argument("--no-diagnostics", dest = "no_diagnostics",
-                    action = "store_true", default = FALSE,
+parser$add_argument("--no-diagnostics", dest = "no_diagnostics", action = "store_true", default = FALSE,
                     help = "Skip per-domain p-value / plotSA diagnostics.")
-parser$add_argument("--plot-width", dest = "plot_width", type = "double",
-                    default = 11,
+parser$add_argument("--plot-width", dest = "plot_width", type = "double", default = 11,
                     help = "Diagnostic PNG width in inches [11].")
-parser$add_argument("--plot-height", dest = "plot_height", type = "double",
-                    default = 5,
+parser$add_argument("--plot-height", dest = "plot_height", type = "double", default = 5,
                     help = "Diagnostic PNG height in inches [5].")
+parser$add_argument("--seed", type = "integer", default = 20260101L)
 
 args <- parser$parse_args()
 
@@ -75,11 +68,11 @@ infiles <- list(
 
 
 ### Files to be created
-outdir <- "2_Pipeline/03-Run_regressions_limma/Prot_perDomain"
+outdir <- "2_Pipeline/03-Run_regressions_limma/Prot_perDomain/"
 MyMkdir(outdir)
 
-diag_dir <- file.path(outdir, "Diagnostics/")
-if (!args$no_diagnostics) {  MyMkdir(diag_dir) }
+diag_dir <-  "Diagnostics/"
+if (!args$no_diagnostics) {  MyMkdir(file.path(outdir, diag_dir)) }
 
 outfiles <- list(
     limma_per_domain = paste0(args$cohort, "_basic.tsv"),
@@ -92,7 +85,7 @@ outfiles <- list(
 
 ## These files are per domain, so define name using a function
 outfiles[["SA_plot"]] <- function(adomain) {
-    file.path(diag_dir, paste0(args$cohort, "_", make.names(adomain), "_pvalue_plotSA.png"))
+    file.path(outdir, diag_dir, paste0(args$cohort, "_", make.names(adomain), "_pvalue_plotSA.png"))
 }
 
 
