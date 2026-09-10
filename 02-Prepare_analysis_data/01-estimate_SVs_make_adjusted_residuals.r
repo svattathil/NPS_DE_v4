@@ -14,14 +14,13 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 
 ##### CONSTANTS #####
 options(stringsAsFactors = FALSE)
-npsvars.bin <- c(agitation = "agit", anxiety = "anx", apathy = "apa", delusion = "del",
-                      depression = "depd", disinhibition = "disn", hallucination = "hall",
-                      irritability = "irr", sleep = "nite")
+source("1_Code/project_constants.r")
 
 vars_to_protect <- c(npsvars.bin, "msex")
 vars_to_regress <- c("Batch", "pmi", "age_death")
-covarstring <- paste0(paste0(Capwords(sapply(covars function(x) {
-    unlist(strsplit(x, split = "_"))[1] })), collapse=""), "SVs")
+
+covars <- unlist(tstrsplit(vars_to_regress, split = "_", keep = 1))
+covarstring <- paste0(Capwords(covars), collapse = "")
 
 
 ###### FUNCTIONS ######
@@ -32,7 +31,7 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 ### Command line arguments
 ## Create parser
 parser <- ArgumentParser()
-parser$add_argument("--cohort", type="character", default = "OHSU", help="OHSU, rush, or emory")
+parser$add_argument("--cohort", type="character", default = "emory", help="OHSU, rush, or emory")
 
 
 ## Read from parser
@@ -47,12 +46,13 @@ infiles <- list(prot = paste0(indir, "prot.pcafiltered.log2norm.txt"),
 
 
 ### Files to be created
-outdir <- paste0("2_Pipeline/02-Prepare_analysis_data/Resid4_jaffe_regress", covarstring)
+outdir <- "2_Pipeline/02-Prepare_analysis_data/"
 MyMkdir(outdir)
-outfiles <- list(out.resid = paste0(outdir, "/resid_regress",
+outfiles <- list(
+    out.phenos.svs = paste0(outdir, "/phenos_cleaned_svs_", args$cohort, ".txt"),
+    out.resid = paste0(outdir, "/resid_regress",
                                     covarstring, "_", args$cohort, ".txt"),
-                 out.svs = paste0(outdir, "/svs_", args$cohort, ".txt"),
-                 out.log = paste0(outdir, "/", args$cohort, ".log"))
+    out.log = paste0(outdir, "/", args$cohort, ".log"))
 
 
 ###### MAIN ######
@@ -127,9 +127,16 @@ svs[, protsample := colnames(edata.complete)]
 setcolorder(svs, "protsample")
 
 
-### Do cleaning
-## Add SVs to phenos
+### Add SVs to phenos
 phenos_withsvs <- merge(phenos, svs, by = "protsample", all.x = TRUE, sort = FALSE)
+
+if(!(all(phenos_withsvs$protsample == colnames(edata.countfiltered)))) {
+    rm(edata.countfiltered)
+} else {
+    print("samples match between edata.countfiltered and phenos_withsvs")
+}
+
+### Do cleaning
 modelform_forcleaning <- as.formula(paste("~ ",
                                           paste0(c(vars_to_protect,
                                                    vars_to_regress ,
@@ -140,9 +147,10 @@ modmat_forcleaning <- model.matrix(modelform_forcleaning, data = phenos_withsvs)
 
 ## Make matching expression data including all proteins that passed count filtering
 ## (don't need to restrict to complete data)
+np <- length(vars_to_protect) + 1 ## number of variables to protect (including intercept)
 edata.cleaned <- cleaningY(edata.countfiltered,
                            modmat_forcleaning,
-                           P = length(vars_to_protect + 1))
+                           P = np)
 
 
 cleaned_forprint <- as.data.table(edata.cleaned, keep.rownames = "protein")
@@ -150,8 +158,8 @@ cleaned_forprint <- as.data.table(edata.cleaned, keep.rownames = "protein")
 
 ###### FINISH ######
 
-### Write SVs
-fwrite(svs, file = outfiles$out.svs, row.names = FALSE, quote = FALSE, sep = "\t")
+### Write phenos with SVs
+fwrite(phenos_withsvs, file = outfiles$out.phenos.svs, row.names = FALSE, quote = FALSE, sep = "\t")
 
 ### Write residuals
 write.table(cleaned_forprint, file = outfiles$out.resid,
@@ -165,3 +173,5 @@ Writelog(paste0("Subjects dropped due to incomplete phenotype data: ", sum(!nomi
 Writelog(paste0("Subjects with SV estimates: ", sum(nomissing)))
 Writelog(paste0("SVA full model: ", paste0(fullmodel, collapse = " ")))
 Writelog(paste0("SVA null model: ", paste0(nullmodel, collapse = " ")))
+Writelog(paste0("model for cleaning: ", paste0(modelform_forcleaning, collapse = " ")))
+Writelog(paste0("terms protected during cleaning (including intercept): ", np))
