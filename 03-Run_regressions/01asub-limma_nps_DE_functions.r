@@ -23,20 +23,20 @@ Annotate_result <- function(dt, ...) {
 }
 
 
-Build_design <- function(predictors, covariates, pheno_dt, sample_ids) {
-    ## Build a design matrix from predictors + covariates
-    ## drop constant/aliased columns, keep the intercept
+Build_design <- function(predictors, covariates, pheno_dt, sample_ids,
+                         svs = NULL) {
+    ## Build a design matrix from predictors + covariates (+ optional SVs),
+    ## drop constant/aliased columns, keep the intercept.
     f <- as.formula(paste("~", paste(c(predictors, covariates),
                                      collapse = " + ")))
     design_dt <- data.table(model.matrix(f, data = pheno_dt))
-
-    design <- as.matrix(design_dt)
-    rownames(design) <- sample_ids
-    colnames(design) <- make.names(colnames(design))
-    informative <- apply(design, 2, function(x) length(unique(x)) > 1L)
-    informative[1] <- TRUE                                # keep intercept
-    design[, informative, drop = FALSE]
-    return(design)
+    if (!is.null(svs)) design_dt <- cbind(design_dt, as.data.table(svs))
+  design <- as.matrix(design_dt)
+  rownames(design) <- sample_ids
+  colnames(design) <- make.names(colnames(design))
+  informative <- apply(design, 2, function(x) length(unique(x)) > 1L)
+  informative[1] <- TRUE                                # keep intercept
+  design[, informative, drop = FALSE]
 }
 
 Fit_limma <- function(edat, design) {
@@ -47,12 +47,13 @@ Fit_limma <- function(edat, design) {
 Estimate_svs <- function(protected_vars, pheno_dt, sample_ids) {
   if (identical(args$n_sv, 0L)) return(NULL)
 
-  mod  <- model.matrix(
-    as.formula(paste("~", paste(c(protected_vars, covars), collapse = " + "))),
-    data = pheno_dt)
-  mod0 <- model.matrix(
-    as.formula(paste("~", paste(covars, collapse = " + "))),
-    data = pheno_dt)
+  nullmodel <- paste("~", paste(covars, collapse = " + "))
+  fullmodel <- paste("~", paste(c(protected_vars, covars), collapse = " + "))
+  message("  SVA null model: ", nullmodel)
+  message("  SVA full model: ", fullmodel)
+
+  mod0 <- model.matrix(as.formula(nullmodel), data = pheno_dt)
+  mod  <- model.matrix(as.formula(fullmodel), data = pheno_dt)
 
   edat <- expr[complete_rows, sample_ids, drop = FALSE]
   if (nrow(edat) < 100L) {

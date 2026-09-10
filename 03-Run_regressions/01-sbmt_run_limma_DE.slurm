@@ -12,11 +12,13 @@
 
  
 ## Build command
+## Redirect stderr to log file
+
 for acohort in OHSU rush emory
 do
     cmd=(Rscript 1_Code/03-Run_regressions/01a-limma_nps_DE.r)
     cmd+=(--cohort $acohort )
     
     echo ${cmd[*]}
-    eval ${cmd[*]}
+    eval ${cmd[*]} 2> 2_Pipeline/03-Run_regressions/Prot_perDomain/$acohort.log
 done

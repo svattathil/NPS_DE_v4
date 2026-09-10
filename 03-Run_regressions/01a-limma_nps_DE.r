@@ -19,14 +19,13 @@ library(sva)
 library(qvalue)
 
 source("~/comsv/Svattathil_Library/svattathil_functions.r")
-
+source("1_Code/project_constants.r")
 
 ### CONSTANTS
 options(stringsAsFactors = FALSE)
-source("1_Code/project_constants.r")
 
-covars_other_than_SVs <- c("Batch", "pmi", "age_death", "msex")
-fac_covars <- c("Batch")
+covars <- c("Batch", "pmi", "age_death", "msex") ## SVs will be added on the fly
+fac_covars <- c("Batch")  ## will be set as a factor
 max_missing <- 0.5  ## max missing fraction allowed for proteins
 
 
@@ -40,6 +39,9 @@ parser <- ArgumentParser(
 )
 parser$add_argument("--cohort", default = "OHSU",
                     help = "Cohort label used in output file names.")
+parser$add_argument("--n-sv", dest = "n_sv", type = "integer", default = -1L,
+                    help = paste("Surrogate variables: -1 = estimate with",
+                                 "num.sv(); 0 = no SVA; k = force k SVs."))
 parser$add_argument("--robust", action = "store_true", default = TRUE,
                     help = "Use eBayes(robust = TRUE).")
 parser$add_argument("--trend", action = "store_true", default = FALSE,
@@ -66,45 +68,49 @@ set.seed(args$seed)
 
 ### Files that exist
 infiles <- list(
-    phenos = paste0("2_Pipeline/02-Prepare_analysis_data/phenos_cleaned_svs_",
+    phenos = paste0("2_Pipeline/02-Prepare_analysis_data/phenos_cleaned_SVs_",
                     args$cohort, ".txt"),
     prot = "2_Pipeline/01-Explore_data/prot.pcafiltered.log2norm.txt"
 )
 
 
 ### Files to be created
-outdir <- "2_Pipeline/03-Run_regressions/Prot_perDomain/"
+outdir <- "2_Pipeline/03-Run_regressions_limma/Prot_perDomain"
 MyMkdir(outdir)
 
 diag_dir <- file.path(outdir, "Diagnostics/")
-if (!args$no_diagnostics) { MyMkdir(diag_dir) }
-
+if (!args$no_diagnostics) {  MyMkdir(diag_dir) }
 
 outfiles <- list(
-    limma_basic     = paste0(args$cohort, "_limma_basic.tsv"),
-    joint_perdomain = paste0(args$cohort, "_limma_joint_perDomain.tsv"),
-    joint_ftest     = paste0(args$cohort, "_limma_joint_Ftest.tsv"),
-    summary_dt      = paste0(args$cohort, "_limma_basic_summary.tsv"),
-    diagnostics     = paste0(args$cohort, "_basic_diagnostics.tsv"),
-    session_info    = "sessionInfo.txt"
+    limma_per_domain = paste0(args$cohort, "_basic.tsv"),
+    summary_dt       = paste0(args$cohort, "_basic_summary.tsv"),
+    diagnostics      = paste0(diag_dir, args$cohort, "_basic_diagnostics.tsv"),
+    joint_per_domain = paste0(args$cohort, "_joint_perDomain.tsv"),
+    joint_ftest      = paste0(args$cohort, "_joint_Ftest.tsv"),
+    session_info     = "sessionInfo.txt"
     )
 
-## This file is per domain so it is defined using a function
+## These files are per domain, so define name using a function
 outfiles[["SA_plot"]] <- function(adomain) {
-    paste0(diag_dir, paste0(args$cohort, "_", make.names(adomain), "_pvalue_plotSA.png"))
+    file.path(diag_dir, paste0(args$cohort, "_", make.names(adomain), "_pvalue_plotSA.png"))
 }
 
 
 ### MAIN ###
-### Read data
+### 1. Read data
 pheno <- fread(infiles$pheno)
 prot <- fread(infiles$prot)
 
 sample_id_col <- "protsample"
 protein_id_col <- names(prot)[1]
 
+### Remove any existing SV columns
+pheno.orig <- copy(pheno)
+oldsvs <- grep("SV", names(pheno.orig), value = TRUE)
+pheno[, (oldsvs) := NULL]
 
-### Align samples and filter
+
+### 2. Align samples and filter
 expr_all <- as.matrix(prot[, !protein_id_col, with = FALSE])
 rownames(expr_all) <- as.character(prot[[protein_id_col]])
 storage.mode(expr_all) <- "double"
@@ -122,17 +128,11 @@ expr_all <- expr_all[, shared, drop = FALSE]
 pdat     <- pheno[J(shared)]                 # reordered to match columns
 stopifnot(identical(as.character(pdat[[sample_id_col]]), colnames(expr_all)))
 
-
-### Set factor covars
-### and get SV columns
 for (nm in fac_covars) pdat[, (nm) := factor(get(nm))]
-svcols <- grep("SV", names(pdat), value = TRUE)
-n_svs <- length(svcols)
-covars <- c(covars_other_than_SVs, svcols)
 
 
 ### limma drops samples with missing covariates from every protein, so
-### remove them once, up front, and report the count
+### remove them once, up front, and report the count.
 covar_ok <- pdat[, Reduce(`&`, lapply(.SD, function(v) !is.na(v))),
                  .SDcols = covars]
 nps_any  <- pdat[, Reduce(`|`, lapply(.SD, function(v) !is.na(v))),
@@ -153,9 +153,12 @@ message("Proteins retained at missingness <= ", max_missing, ": ",
         sum(keep_prot), " of ", length(keep_prot))
 expr <- expr_all[keep_prot, , drop = FALSE]
 
+complete_rows <- rowSums(is.na(expr)) == 0L
+message("Proteins with complete data (used for SVA): ", sum(complete_rows))
 
-#### Analysis A: one model per NPS domain ####
-## Set up listobjects to hold results per domain
+
+#### 3. Analysis A: one model per NPS domain ####
+### Make list objects to hold results per domain
 per_domain <- vector("list", length(npsvars.bin))
 names(per_domain) <- npsvars.bin
 
@@ -180,8 +183,9 @@ for (dom in npsvars.bin) {
 
     edat <- expr[, samples, drop = FALSE]
 
-    design <- Build_design(predictors = dom, covariates = covars,
-                           pheno_dt = sub_pdat, sample_ids = samples)
+    ## Estimate SVs and define model
+    sv   <- Estimate_svs(protected_vars = dom, pheno_dt = sub_pdat, sample_ids = samples)
+    design <- Build_design(predictors = dom, covariates = covars, pheno_dt = sub_pdat, sample_ids = samples, svs = sv)
 
     coef_name <- make.names(dom)
     if (!coef_name %in% colnames(design)) {
@@ -191,7 +195,7 @@ for (dom in npsvars.bin) {
 
     ## Fit model
     fit <- Fit_limma(edat, design)
-
+    n_svs_used <- if (is.null(sv)) 0L else ncol(sv)
 
     ## Extract results
     res <- fit |>
@@ -210,7 +214,7 @@ for (dom in npsvars.bin) {
                     model = "per_domain",
                     n_samples = length(samples),
                     n_cases = n_case,
-                    n_svs = n_svs)
+                    n_svs = if (is.null(sv)) 0L else ncol(sv))
     setorder(res, P.Value)
 
     res[fdr < 0.05, sig.qvalue05 := "sig"]
@@ -223,10 +227,11 @@ for (dom in npsvars.bin) {
     if (!args$no_diagnostics) {
         diag_list[[dom]] <- Pvalue_diagnostics(fit, res[["P.Value"]], dom,
                                                length(samples), n_case,
-                                               n_svs)
-        Write_diagnostic_plot(fit, res[["P.Value"]], dom, length(samples), n_case,
-                              n_svs, outfiles$SA_plot(dom)
-                              )
+                                               n_svs_used)
+        Write_diagnostic_plot(
+            fit, res[["P.Value"]], dom, length(samples), n_case, n_svs_used,
+            outfiles$SA_plot(dom)
+        )
         message("  diagnostics: prop p < 0.05 = ",
                 signif(diag_list[[dom]]$prop_p_lessthan_05, 3),
                 ", pi0 = ", signif(diag_list[[dom]]$pi0, 3),
@@ -267,7 +272,6 @@ if (!args$no_diagnostics) {
 ## Estimates each domain's effect conditional on the others; the moderated F over
 ## all NPS coefficients is the joint "any domain" test.
 message("=== Joint model")
-
 ### The test requires complete data for all NPS
 complete_nps <- pdat[, Reduce(`&`, lapply(.SD, function(v) !is.na(v))),
                      .SDcols = npsvars.bin]
@@ -283,20 +287,22 @@ print(data.table(domain = npsvars.bin,
                  n_controls = length(samples_j) - case_counts))
 
 dom_j <- names(case_counts)[case_counts >= args$min_group &
-                              (length(samples_j) - case_counts) >= args$min_group]
+                              (length(samples_j) - case_counts) >=
+                              args$min_group]
 dropped <- setdiff(npsvars.bin, dom_j)
 if (length(dropped) > 0L) {
-  message("Domains dropped from joint model: ", paste(dropped, collapse = ", "))
+  message("Domains dropped from joint model: ",
+          paste(dropped, collapse = ", "))
 }
 
-
-### Define data and model
+### Estimate SVs and define model
 edat_j   <- expr[, samples_j, drop = FALSE]
-design_j <- Build_design(predictors = dom_j, covariates = covars,
-                           pheno_dt = sub_j, sample_ids = samples_j)
+sv_j     <- Estimate_svs(dom_j, sub_j, samples_j)
+design_j <- Build_design(dom_j, covars, sub_j, samples_j, sv_j)
 
 nps_coefs <- intersect(make.names(dom_j), colnames(design_j))
-message("NPS coefficients in joint model: ", paste(nps_coefs, collapse = ", "))
+message("NPS coefficients in joint model: ",
+        paste(nps_coefs, collapse = ", "))
 
 ## Correlated NPS domains can make the design rank deficient
 qr_rank <- qr(design_j)$rank
@@ -316,13 +322,13 @@ joint_per_domain <- lapply(nps_coefs, function(cf) {
                     cohort = args$cohort,
                     model = "joint",
                     n_samples = length(samples_j),
-                    n_svs = n_svs)
+                    n_svs = if (is.null(sv_j)) 0L else ncol(sv_j))
 }) |>
 rbindlist(use.names = TRUE, fill = TRUE)
 setorder(joint_per_domain, domain, P.Value)
 joint_per_domain[fdr < 0.05, sig.qvalue05 := "sig"]
 
-fwrite(joint_per_domain, file.path(outdir, outfiles$joint_perdomain), sep = "\t")
+fwrite(joint_per_domain, file.path(outdir, outfiles$joint_per_domain), sep = "\t")
 
 
 ### Extract moderated F across all NPS coefficients
@@ -337,38 +343,40 @@ setorder(joint_F, P.Value)
 joint_F[fdr < 0.05, sig.qvalue := "sig"]
 
 message("Joint F-test proteins at FDR < 0.05: ", joint_F[fdr < 0.05, .N])
-fwrite(joint_F, file.path(outdir, outfiles$joint_ftest), sep = "\t")
+
 
 
 ### 5. Run summary
-if (nrow(per_domain_dt) > 0L) {
-  summary_dt <- per_domain_dt[, .(n_proteins = .N,
-                                  n_fdr05 = sum(fdr < 0.05, na.rm = TRUE),
-                                  n_samples = n_samples[1],
-                                  n_cases = n_cases[1],
-                                  n_svs = n_svs[1]),
-                              by = .(cohort, domain)]
-  print(summary_dt)
-  fwrite(summary_dt, file.path(outdir, outfiles$summary_dt), sep = "\t")
-}
+summary_dt <- per_domain_dt[, .(n_proteins = .N,
+                                n_fdr05 = sum(fdr < 0.05, na.rm = TRUE),
+                                n_samples = n_samples[1],
+                                n_cases = n_cases[1],
+                                n_svs = n_svs[1]),
+                            by = .(cohort, domain)]
+print(summary_dt)
 
-#writeLines(capture.output(sessionInfo()), file.path(outdir, outfiles$session_info))
+
+writeLines(capture.output(sessionInfo()), file.path(outdir, outfiles$session_info))
 message("Done.")
 
 
+
 ### FINISH ###
-fwrite(per_domain_dt, file.path(outdir, outfiles$limma_basic), sep = "\t")
+fwrite(per_domain_dt, file.path(outdir, outfiles$limma_per_domain), sep = "\t")
+fwrite(summary_dt, file.path(outdir, outfiles$summary_dt), sep = "\t")
+
+fwrite(joint_F, file.path(outdir, outfiles$joint_ftest), sep = "\t")
 
 if (!args$no_diagnostics) {
-        fwrite(diag_dt, file = outfiles$diagnostics, sep = "\t")
+    fwrite(diag_dt, file.path(outdir, outfiles$diagnostics), sep = "\t")
 }
 
 
 
 
 
-
-### Code used in exploration
+########################################################################
+### Code used for exploration
 if(0) {
 ## Check missingness v. batch
 ## This was in response to the warning about 'Partial NA coefficients for XX probes'
