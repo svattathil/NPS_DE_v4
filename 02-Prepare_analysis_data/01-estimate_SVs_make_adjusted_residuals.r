@@ -16,8 +16,8 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 options(stringsAsFactors = FALSE)
 source("1_Code/project_constants.r")
 
-vars_to_protect <- c(npsvars.bin, "msex")
-vars_to_regress <- c("Batch", "pmi", "age_death")
+vars_to_regress <- c("Batch", "pmi", "age_death", "msex") ## will also regress SVs
+vars_to_protect <- c(npsvars.bin)
 
 covars <- unlist(tstrsplit(vars_to_regress, split = "_", keep = 1))
 covarstring <- paste0(Capwords(covars), collapse = "")
@@ -31,7 +31,7 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 ### Command line arguments
 ## Create parser
 parser <- ArgumentParser()
-parser$add_argument("--cohort", type="character", default = "emory", help="OHSU, rush, or emory")
+parser$add_argument("--cohort", type="character", default = "OHSU", help="OHSU, rush, or emory")
 
 
 ## Read from parser
@@ -49,7 +49,7 @@ infiles <- list(prot = paste0(indir, "prot.pcafiltered.log2norm.txt"),
 outdir <- "2_Pipeline/02-Prepare_analysis_data/"
 MyMkdir(outdir)
 outfiles <- list(
-    out.phenos.svs = paste0(outdir, "/phenos_cleaned_svs_", args$cohort, ".txt"),
+    out.phenos.svs = paste0(outdir, "/phenos_cleaned_SVs_", args$cohort, ".txt"),
     out.resid = paste0(outdir, "/resid_regress_covars_", args$cohort, ".txt"),
     out.log = paste0(outdir, "/", "data_cleaning_", args$cohort, ".log"))
 
@@ -106,6 +106,7 @@ edata.complete <- edata.countfiltered[complete.cases(edata.countfiltered), ]
 nullmodel <- as.formula(paste("~ ", paste0(c(vars_to_regress), collapse = "+")))
 fullmodel <- as.formula(paste("~ ", paste0(c(vars_to_protect, vars_to_regress), collapse = "+")))
 
+
 mod0 <- model.matrix(nullmodel, data = phenos)
 mod <- model.matrix(fullmodel, data = phenos)
 
@@ -156,9 +157,9 @@ cleaned_forprint <- as.data.table(edata.cleaned, keep.rownames = "protein")
 
 
 ###### FINISH ######
-
 ### Write phenos with SVs
 fwrite(phenos_withsvs, file = outfiles$out.phenos.svs, row.names = FALSE, quote = FALSE, sep = "\t")
+
 
 ### Write residuals
 write.table(cleaned_forprint, file = outfiles$out.resid,
