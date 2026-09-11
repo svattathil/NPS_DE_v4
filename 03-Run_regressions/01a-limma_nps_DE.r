@@ -12,11 +12,11 @@
 
 ### SETUP ###
 rm(list = ls())
-library(argparse)
-library(data.table)
-library(limma)
-library(sva)
-library(qvalue)
+suppressMessages(library(argparse))
+suppressMessages(library(data.table))
+suppressMessages(library(limma))
+suppressMessages(library(sva))
+suppressMessages(library(qvalue))
 
 source("~/comsv/Svattathil_Library/svattathil_functions.r")
 source("~/comsv/Svattathil_Library/manhattan_and_qq_plot_functions.r")
@@ -24,10 +24,6 @@ source("~/comsv/Svattathil_Library/manhattan_and_qq_plot_functions.r")
 ### CONSTANTS
 options(stringsAsFactors = FALSE)
 source("1_Code/project_constants.r")
-max_missing <- 0.5  ## max missing fraction allowed for proteins
-
-covars <- c("Batch", "pmi", "age_death", "msex") ## SVs will be added on the fly
-fac_covars <- c("Batch")  ## will be set as a factor
 
 
 ### FUNCTIONS ###
@@ -42,15 +38,11 @@ parser$add_argument("--run", default = "basic",
                     help = "Specify the run.")
 parser$add_argument("--cohort", default = "OHSU",
                     help = "Cohort label used in output file names.")
-
-
 ## Control limma
 parser$add_argument("--robust", action = "store_true", default = TRUE,
                     help = "Use eBayes(robust = TRUE).")
 parser$add_argument("--trend", action = "store_true", default = FALSE,
                     help = "Use eBayes(trend = TRUE).")
-
-
 ## Other controls
 parser$add_argument("--no-diagnostics", dest = "no_diagnostics", action = "store_true", default = FALSE,
                     help = "Skip per-domain p-value / plotSA diagnostics.")
@@ -77,28 +69,55 @@ script_run_basic_joint <- "1_Code/03-Run_regressions/01asub-run_basic_joint.r"
 
 
 ### Files to be created
-outdir <- "2_Pipeline/03-Run_regressions/Prot_perDomain/"
+outdir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", Capwords(args$run), "/")
 MyMkdir(outdir)
 
 diag_dir <-  "Diagnostics/"
 if (!args$no_diagnostics) {  MyMkdir(file.path(outdir, diag_dir)) }
 
+fileid <- paste0(args$cohort, "_", args$run)
 outfiles <- list(
-    limma_per_domain = paste0(args$cohort, "_basic.tsv"),
-    summary_dt       = paste0(args$cohort, "_basic_summary.tsv"),
-    diagnostics      = paste0(diag_dir, args$cohort, "_basic_diagnostics.tsv"),
-    joint_per_domain = paste0(args$cohort, "_joint_perDomain.tsv"),
-    joint_ftest      = paste0(args$cohort, "_joint_Ftest.tsv"),
+    limma_per_domain = paste0(fileid, ".tsv"),
+    summary_dt       = paste0(fileid, "_summary.tsv"),
+    diagnostics      = paste0(diag_dir, fileid, "_diagnostics.tsv"),
+    qq               = paste0(fileid, "_qqplots.pdf"),
     session_info     = "sessionInfo.txt"
-    )
+)
+
+if(args$run == "basic") {
+    outfiles[["joint_per_domain"]] <- paste0(args$cohort, "_joint_perDomain.tsv")
+    outfiles[["joint_ftest"]]     = paste0(args$cohort, "_joint_Ftest.tsv")
+}
 
 ## These files are per domain, so define name using a function
 outfiles[["SA_plot"]] <- function(adomain) {
-    file.path(outdir, diag_dir, paste0(args$cohort, "_", make.names(adomain), "_pvalue_plotSA.png"))
+    file.path(outdir, diag_dir, paste0(fileid, "_", make.names(adomain), "_pvalue_plotSA.png"))
 }
 
 
 ### MAIN ###
+
+### Set some values based on the run specifics
+### ( More of this happens later also)
+## npsvars for this run
+if(args$run == "severity") { npsvars <- npsvars.sev
+} else {
+    npsvars <- npsvars.bin
+}
+
+if (args$run %in% c("males", "females")) {
+    covars <- c("Batch", "pmi", "age_death") ## SVs will be added on the fly
+    fac_covars <- c("Batch")  ## will be set as a factor
+} else {
+    covars <- c("Batch", "pmi", "age_death", "msex") ## SVs will be added on the fly
+    fac_covars <- c("Batch")  ## will be set as a factor
+}
+
+
+## min non-missing donors to keep protein in analysis
+mincount <- ifelse(args$run %in% c("males", "females"), 25, 50)
+
+
 ### Read data
 pheno <- fread(infiles$pheno)
 prot <- fread(infiles$prot)
@@ -113,6 +132,17 @@ pheno.orig <- copy(pheno)
 oldsvs <- grep("SV", names(pheno.orig), value = TRUE)
 pheno[, (oldsvs) := NULL]
 
+
+## Filter if necessary for this run
+if(args$run == "males") {
+    pheno <- pheno[msex == 1, ]
+}
+
+if(args$run == "females") {
+    pheno <- pheno[msex == 1, ]
+}
+
+## Do some formatting
 expr_all <- as.matrix(prot[, !protein_id_col, with = FALSE])
 rownames(expr_all) <- as.character(prot[[protein_id_col]])
 storage.mode(expr_all) <- "double"
@@ -139,7 +169,7 @@ for (nm in fac_covars) pdat[, (nm) := factor(get(nm))]
 ### limma drops samples with missing covariates from every protein, so
 ### remove them once, up front, and report the count
 covar_ok <- pdat[, Reduce(`&`, lapply(.SD, function(v) !is.na(v))), .SDcols = covars]
-nps_any  <- pdat[, Reduce(`|`, lapply(.SD, function(v) !is.na(v))), .SDcols = npsvars.bin]
+nps_any  <- pdat[, Reduce(`|`, lapply(.SD, function(v) !is.na(v))), .SDcols = npsvars]
 keep_samp <- covar_ok & nps_any
 message("Samples dropped (missing covariate or no NPS observation): ", sum(!keep_samp))
 
@@ -149,9 +179,9 @@ for (nm in fac_covars) pdat[, (nm) := droplevels(get(nm))]
 
 
 ### Filter to proteins that pass missingness threshold
-miss_frac <- rowMeans(is.na(expr_all))
-keep_prot <- miss_frac <= max_missing
-message("Proteins retained at missingness <= ", max_missing, ": ",
+nonmiss_count <- rowSums(!is.na(expr_all))
+keep_prot <- nonmiss_count >= mincount
+message("Proteins retained at count >= ", mincount, " donors: ",
         sum(keep_prot), " of ", length(keep_prot))
 expr <- expr_all[keep_prot, , drop = FALSE]
 
@@ -159,26 +189,23 @@ complete_rows <- rowSums(is.na(expr)) == 0L
 message("Proteins with complete data (used for SVA): ", sum(complete_rows))
 
 
-#### 3. Analysis A: one model per NPS domain ####
 ### Make list objects to hold results per domain
-per_domain <- vector("list", length(npsvars.bin))
-names(per_domain) <- npsvars.bin
+per_domain <- diag_list <- qq_list <- vector("list", length(npsvars))
+names(per_domain) <- names(diag_list) <- names(qq_list) <- npsvars
 
-diag_list  <- vector("list", length(npsvars.bin))
-names(diag_list) <- npsvars.bin
 
 
 ### Run for each domain in turn
-for (dom in npsvars.bin) {
+for (dom in npsvars) {
     ## Prepare data
     message("=== Per-domain model: ", dom)
     sub_pdat <- pdat[!is.na(get(dom))]   ## subset of donors with non-missing NPS for this domain
-    samples <- sub_pdat[[sample_id_col]]
+    samples  <- sub_pdat[[sample_id_col]]
 
     edat <- expr[, samples, drop = FALSE]
 
     ## Estimate SVs and define model
-    sv   <- Estimate_svs(protected_vars = dom, pheno_dt = sub_pdat, sample_ids = samples)
+    sv     <- Estimate_svs(protected_vars = dom, pheno_dt = sub_pdat, sample_ids = samples)
     design <- Build_design(predictors = dom, covariates = covars, pheno_dt = sub_pdat, sample_ids = samples, svs = sv)
 
     coef_name <- make.names(dom)
@@ -228,6 +255,12 @@ for (dom in npsvars.bin) {
                 ", pi0 = ", signif(diag_list[[dom]]$pi0, 3),
                 ", df.prior = ", signif(diag_list[[dom]]$df_prior, 3))
     }
+
+    ##  Draw qq plot
+    n.na <- sum(is.na(res$P.Value))
+    titleqq <- paste0(dom, "\n", "N=", nrow(sub_pdat))
+    if(n.na > 0) { titleqq <- paste0(titleqq, "; excluding ", n.na, " proteins with NA P-value") }
+    qq_list[[dom]] <- qqunif.plot(res[!is.na(P.Value), P.Value], maintitle=titleqq)
 }
 
 
@@ -244,7 +277,7 @@ if (!args$no_diagnostics) {
     diag_dt <- rbindlist(diag_list, use.names = TRUE, fill = TRUE)
     if (nrow(diag_dt) > 0L) {
         setorder(diag_dt, domain)
-        print(diag_dt)
+        #print(diag_dt)
 
         ## Flag domains whose p-value distribution looks misspecified.
         flagged <- diag_dt[obs_exp_p_lessthan_05 > 2 | prop_p_lessthan_05 < 0.02 |
@@ -264,6 +297,8 @@ summary_dt <- per_domain_dt[, .(n_proteins = .N,
                                 n_svs = n_svs[1]),
                             by = .(cohort, domain)]
 print(summary_dt)
+
+
 
 ### Run joint model (basic run only)
 if(args$run == "basic") {
@@ -286,3 +321,8 @@ if(args$run == "basic") {
 if (!args$no_diagnostics) {
     fwrite(diag_dt, file.path(outdir, outfiles$diagnostics), sep = "\t")
 }
+
+
+pdf(file.path(outdir, outfiles$qq), height = 7, width = 7)
+for (i in qq_list) { print(i) }
+dev.off()

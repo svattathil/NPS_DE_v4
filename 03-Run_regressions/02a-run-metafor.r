@@ -12,11 +12,7 @@ rm(list = ls())
 
 ##### CONSTANTS #####
 options(stringsAsFactors = FALSE)
-npsvars.bin <- c(agitation = "agit", anxiety = "anx", apathy = "apa", delusion = "del",
-                 depression = "depd", disinhibition = "disn", hallucination = "hall",
-                 irritability = "irr", sleep = "nite")
-
-cohorts <- c("OHSU", "rush", "emory")
+source("1_Code/project_constants.r")
 
 
 ###### FUNCTIONS ######
@@ -27,37 +23,39 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 ### Command line arguments
 ## Create parser
 parser <- ArgumentParser()
-parser$add_argument("--run", type="character", default="main", help = "main or cond_ind")
+parser$add_argument("--run", type="character", default="basic", help = "basic or cond_ind")
 parser$add_argument("--SE_type", type="character", default="SE_mod", help = "SE_mod or SE_unmod")
 
 
 ## Read from parser
 args <- parser$parse_args()
 
-## Define outcomes
-if(args$run %in% c("main", "cond_ind", "severity", "adj_e4_exp", "adj_e4_count", "stratify_e4_any")) {
-    outcomes <- npsvars.bin
+## Define outcomes and subset of cohorts (if necessary)
+if(args$run %in% c("basic", "cond_ind",  "adj_e4_exp", "adj_e4_count", "stratify_e4_any")) {
+    npsvars <- npsvars.bin
 }
-if(args$run == "latclass") {
-    outcomes <- c(latclass="latclass")
+
+if(args$run %in% c("severity")) {
+    npsvars <- npsvars.sev
+    cohorts <- c("OHSU", "emory")
 }
 
 
 ### Files that exist
-resdir <- "2_Pipeline/08-Run_regressions_limma/"
+resdir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", Capwords(args$run), "/")
 
-if(args$run == "main") {
-    Statsfile <- function(acohort) {  paste0(resdir, acohort, "_limma_per_domain.tsv") }
+if(args$run %in% c("basic", "severity")) {
+    Statsfile <- function(acohort) {  paste0(resdir, acohort, "_", args$run, ".tsv") }
 }
-if(args$fun == "cond_ind") {
-    Statsfile <- function(acohort) {  paste0(resdir, acohort, "_limma_joint_per_domain.tsv") }
+if(args$run == "cond_ind") {
+    Statsfile <- function(acohort) {  paste0(resdir, acohort, "_joint_perDomain.tsv") }
 }
 
 
 ### Files to be created
 outdir <- paste0(resdir, "Metafor/")
 MyMkdir(outdir)
-out.stats <- paste0(outdir, "metafor_qval_per_domain_using_", args$SE_type, ".txt")
+out.stats <- paste0(outdir, "metafor_", args$run, "_using_", args$SE_type, ".txt")
 
 
 ###### MAIN ######
@@ -67,7 +65,7 @@ res.list.cohort <- sapply(cohorts, function(x) { fread(Statsfile(x)) }, simplify
 
 ### Prepare data
 ## Split by domain
-res.list.nps <- sapply(as.character(npsvars.bin), function(anps) {
+res.list.nps <- sapply(as.character(npsvars), function(anps) {
     sapply(res.list.cohort, function(cohortdat) {
         cohortdat[domain == anps, ]
         }, simplify = FALSE)
@@ -77,8 +75,9 @@ res.list.nps <- sapply(as.character(npsvars.bin), function(anps) {
 ### Initialize list to hold results across NPS
 fe_results_list.nps <- list()
 
+
 ### Run meta-analysis for each NPS
-for(currnps in npsvars.bin) {
+for(currnps in npsvars) {
     cat("Running for ", currnps, "\n")
     ### Make long table for current NPS
     res.list <- res.list.nps[[currnps]] # list with one element per cohort
@@ -89,7 +88,7 @@ for(currnps in npsvars.bin) {
 
     ## Filter to only the proteins that are present for all three cohorts
     proteincounts <- meta_long[, .N, by = "protein"]
-    meta_long <- meta_long[protein %in% proteincounts[N == 3, protein], ]
+    meta_long <- meta_long[protein %in% proteincounts[N == length(cohorts), protein], ]
 
 
     ### Run metafor and make table of stats
@@ -99,8 +98,8 @@ for(currnps in npsvars.bin) {
           list(
               fe_beta   = coef(fit),                # pooled estimate
               fe_se     = sqrt(vcov(fit)),          # pooled SE
-              fe_z      = summary(fit)$zval,                # Wald Z
-              fe_p      = summary(fit)$pval,                # two‑sided p‑value
+              fe_z      = summary(fit)$zval,        # Wald Z
+              fe_p      = summary(fit)$pval,        # two‑sided p‑value
               fe_Q      = fit$QE,                   # heterogeneity Q (should be low),
               fe_Q_pval = pchisq(fit$QE, df = length(cohorts)-1, lower.tail = FALSE), # p-value of Cochran's Q
               fe_I2     = fit$I2                    # I² (should be ≈0 for FE)
@@ -114,7 +113,7 @@ for(currnps in npsvars.bin) {
     fe_results[, qvalue := qvalue(fe_p)$qvalue]
     fe_results[, p.BH := p.adjust(fe_p, method = "BH")]
     fe_results[, p.bonf := p.adjust(fe_p, method = "bonferroni")]
-    fe_results[, sig.qvalue05 := ifelse(qvalue < 0.05, TRUE, FALSE)]
+    fe_results[, sig.qvalue05 := ifelse(qvalue < 0.05, "sig", "")]
 
 
     ### Save result to cross-nps list
@@ -122,7 +121,6 @@ for(currnps in npsvars.bin) {
     rm(fe_results) ## clean up
 }
 rm(currnps)
-
 
 
 ### Make flat table for printing

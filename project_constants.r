@@ -1,6 +1,7 @@
 npsvars.bin <- c(agitation = "agit", anxiety = "anx", apathy = "apa",
                       depression = "depd", irritability = "irr", psychosis = "psych",
                        sleep = "nite")
+npsvars.sev <- paste0(npsvars.bin, "sev")
 
 cohorts <- c("OHSU", "rush", "emory")
 
