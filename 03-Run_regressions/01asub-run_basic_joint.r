@@ -1,46 +1,29 @@
 
 
-
-
-
-
-
-
-
-
 ### Joint model with all NPS domains as predictors ###
 ## Estimates each domain's effect conditional on the others; the moderated F over
 ## all NPS coefficients is the joint "any domain" test.
 message("=== Joint model")
 ### The test requires complete data for all NPS
 complete_nps <- pdat[, Reduce(`&`, lapply(.SD, function(v) !is.na(v))),
-                     .SDcols = npsvars.bin]
+                     .SDcols = npsvars]
 sub_j     <- pdat[complete_nps]
 samples_j <- sub_j[[sample_id_col]]
-message("Samples with complete data on all ", length(npsvars.bin),
+message("Samples with complete data on all ", length(npsvars),
         " domains: ", length(samples_j))
 
 ### Get some info
-case_counts <- vapply(as.character(npsvars.bin), function(d) sum(sub_j[[d]]), numeric(1))
-print(data.table(domain = npsvars.bin,
+case_counts <- vapply(as.character(npsvars), function(d) sum(sub_j[[d]]), numeric(1))
+print(data.table(domain = npsvars,
                  n_cases = case_counts,
                  n_controls = length(samples_j) - case_counts))
 
-dom_j <- names(case_counts)[case_counts >= args$min_group &
-                              (length(samples_j) - case_counts) >=
-                              args$min_group]
-dropped <- setdiff(npsvars.bin, dom_j)
-if (length(dropped) > 0L) {
-  message("Domains dropped from joint model: ",
-          paste(dropped, collapse = ", "))
-}
-
 ### Estimate SVs and define model
 edat_j   <- expr[, samples_j, drop = FALSE]
-sv_j     <- Estimate_svs(dom_j, sub_j, samples_j)
-design_j <- Build_design(dom_j, covars, sub_j, samples_j, sv_j)
+sv_j     <- Estimate_svs(npsvars, sub_j, samples_j)
+design_j <- Build_design(npsvars, covars, sub_j, samples_j, sv_j)
 
-nps_coefs <- intersect(make.names(dom_j), colnames(design_j))
+nps_coefs <- intersect(make.names(npsvars), colnames(design_j))
 message("NPS coefficients in joint model: ",
         paste(nps_coefs, collapse = ", "))
 
