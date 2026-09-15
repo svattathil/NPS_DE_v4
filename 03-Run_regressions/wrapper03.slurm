@@ -22,7 +22,7 @@ scriptdir=1_Code/03-Run_regressions/
 
 
 ## Functions
-run_regressions01() {
+run_limma_script01() {
     ## Run the 01a script to run per-domain regressions for each cohort in turn
     ## Bail out if run fails on any cohort
     local run=$1
@@ -40,8 +40,11 @@ run_regressions01() {
 
 	logfile=2_Pipeline/03-Run_regressions/Prot_perDomain/"${run^}"/${run}_${acohort}.log
         cmd=(Rscript 1_Code/03-Run_regressions/01a-limma_nps_DE.r)
+	cmd+=(--robust)
+	cmd+=(--trend)
 	cmd+=(--run $run)
         cmd+=(--cohort $acohort)
+	
         
         echo ${cmd[*]}
         eval ${cmd[*]} 2> $logfile
@@ -52,33 +55,33 @@ run_regressions01() {
     done
 }
 
-: << 'EOF'
+
 ## Basic model
-run_regressions01 basic
+run_limma_script01 basic
 Rscript $scriptdir/02a-run-metafor.r --run basic
 Rscript $scriptdir/aggregate_stats_to_excel.r --run basic
 
 
 ## Sensitivity - Severity
-run_regressions01 severity OHSU emory
+run_limma_script01 severity OHSU emory
 Rscript $scriptdir/02a-run-metafor.r --run severity
 Rscript $scriptdir/aggregate_stats_to_excel.r --run severity
 
 
 ## Sensitivity - sex-specific
-run_regressions01 males
+run_limma_script01 males
 Rscript $scriptdir/aggregate_stats_to_excel.r --run males
 
-run_regressions01 females
+run_limma_script01 females
 Rscript $scriptdir/aggregate_stats_to_excel.r --run females
 
 ## Sensitivity - adjust e4 expression
-run_regressions01 e4_adj
+run_limma_script01 e4_adj
 Rscript $scriptdir/02a-run-metafor.r --run e4_adj
 
-EOF
-
-for acohort in OHSU #rush emory
+: << 'EOF'
+for acohort in rush emory #OHSU #
 do
     Rscript $scriptdir/03a-run_multivariate.r --cohort $acohort
 done
+EOF

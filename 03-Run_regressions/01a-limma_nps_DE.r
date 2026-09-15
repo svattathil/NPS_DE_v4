@@ -39,7 +39,7 @@ parser$add_argument("--run", default = "basic",
 parser$add_argument("--cohort", default = "OHSU",
                     help = "Cohort label used in output file names.")
 ## Control limma
-parser$add_argument("--robust", action = "store_true", default = TRUE,
+parser$add_argument("--robust", action = "store_true", default = FALSE,
                     help = "Use eBayes(robust = TRUE).")
 parser$add_argument("--trend", action = "store_true", default = FALSE,
                     help = "Use eBayes(trend = TRUE).")

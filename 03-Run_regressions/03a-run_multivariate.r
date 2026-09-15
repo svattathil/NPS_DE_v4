@@ -235,11 +235,11 @@ write.table(summstats, file = outfiles$summstats, row.names = FALSE, quote = FAL
 
 
 ### Write log file
-write("\nModel and significance summary:", file = outfiles$log, append=TRUE)
+write("\nModel and significance summary:", file = outfiles$log)
 fwrite(logtab, file = outfiles$log, sep = "\t", quote = FALSE, col.names = TRUE, append = TRUE)
 
 
-### Write objects to do use for meta-analysis
+### Write objects to do  meta-analysis
 saveRDS(beta_vectors, file = outfiles$formeta_betas)
 saveRDS(covariance_mats, file = outfiles$formeta_covs)
 

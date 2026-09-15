@@ -31,7 +31,6 @@ parser <- ArgumentParser()
 
 ## Active arguments
 parser$add_argument("--run",    type="character", default="basic")
-#parser$add_argument("--cohort", type="character", default="OHSU")
 
 ## Read from parser
 args <- parser$parse_args()
@@ -47,7 +46,7 @@ if(args$run == "severity") {
 
 
 for(acohort in cohorts) {
-### Files that exist
+    ### Files that exist
     indir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", Capwords(args$run), "/")
     fileid <- paste0(acohort, "_", args$run)
 
@@ -57,24 +56,23 @@ for(acohort in cohorts) {
     )
 
 
-### Files to be created
+    ### Files to be created
     output_file <- paste0(indir, paste(c("stats", args$run, acohort), collapse="_"), ".xlsx")
 
 
-###### MAIN ######
-### Read in data
+    ### Read in data
     res <- fread(infiles$limma_per_domain)
     summ_contents <- fread(infiles$summary)
 
 
-    ## Split results by domain
+    ### Split results by domain
     nps_list <- vector("list", length(npsvars))
     names(nps_list) <- npsvars
     for(adomain in npsvars) { nps_list[[adomain]] <- res[domain == adomain, ] }
     names(nps_list) <- names(npsvars)
 
 
-    ## Write to Excel –
+    ### Write to Excel workbook –
     ## first sheet is logs,
     ## then one worksheet per NPS
     wb <- createWorkbook()

@@ -1,0 +1,339 @@
+---
+author: "Selina Vattathil"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r global-options-1, include=FALSE}
+rm(list=ls())
+library(knitr)
+library(data.table)
+library(ggplot2)
+library(lavaan)
+library(semPlot)
+library(psych)
+library(polycor)
+library(argparse)
+source("~/comsv/Svattathil_Library/svattathil_functions.r")
+```
+
+```{r global-chunk-settings-1, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=TRUE, message=TRUE, include=TRUE, collapse=TRUE)
+```
+
+```{r word-document-settings-1, include=FALSE, eval=TRUE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4)
+```
+
+```{r html-document-settings-1, include=FALSE, eval=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8)
+```
+
+```{r constants}
+options(stringsAsFactors = FALSE)
+source("1_Code/Project_constants.r")
+```
+
+```{r functions, include=FALSE}
+## function to use , thousands separator for numbers in kable
+Mkable <- function(x, ...) { kable(x, format.args = list(big.mark = ','), ...) }
+```
+
+
+```{r command-line}
+### Command line arguments
+## Create parser
+parser <- ArgumentParser()
+parser$add_argument("--max_factors", type="integer", default=4, help="Maximum number of factors to test")
+
+## Read from parser
+args <- parser$parse_args()
+
+currcohort <- "OHSU"
+
+```
+
+---
+title: "Factor analysis - `r currcohort`"
+---
+
+
+
+```{r define-input}
+### Files that exist
+indir <- "2_Pipeline/02-Prepare_analysis_data/"
+files <- list(phenos = paste0(indir, "phenos_cleaned_SVs", currcohort, ".txt")
+              )
+```
+
+
+```{r define-output}
+### Files to be created
+output_dir <- "2_Pipeline/02-Prepare_analysis_data/Latent_factors"
+MyMkdir(output_dir)
+outfiles <- list(factor_scores  = file.path(output_dir, paste0("factor_scores_", currcohort, ".txt")),
+                 rds            = file.path(output_dir, paste0("efa_obj_", currcohort, ".rds"))
+                 )
+
+## Command to run this script
+thisscript <- "1_Code/02-Prepare_analysis_data/02a-estimate_latent_factors_OHSU.rmd"
+
+```
+
+
+```{r read-data}
+phenos <- fread(files[["phenos"]])
+
+```
+
+
+```{r prepare-data-1}
+## Convert to matrix for analysis
+nps_matrix <- as.matrix(phenos[, npsvars.bin, with = FALSE])
+rownames(nps_matrix) <- phenos$protsample
+
+
+# Ensure binary coding (0/1)
+if (!all(nps_matrix %in% c(0, 1, NA))) {
+  cat("WARNING: Non-binary values detected. Converting to 0/1...\n")
+  nps_matrix <- ifelse(nps_matrix > 0, 1, 0)
+}
+
+
+# Check for complete cases
+complete_cases <- complete.cases(nps_matrix)
+cat("Complete cases:", sum(complete_cases), "out of", nrow(nps_matrix), "\n")
+
+if (sum(complete_cases) < nrow(nps_matrix)) {
+  cat("Proceeding with listwise deletion for missing data.\n")
+  nps_matrix <- nps_matrix[complete_cases, ]
+}
+
+```
+
+
+```{r exploratory-factor-analysis}
+### Compute tetrachoric correlation matrix
+tetra_corr <- polycor::hetcor(nps_matrix)$correlations
+
+```
+
+
+#### Determine number of latent factors
+```{r scree}
+### Determine number of factors using scree plot
+screeout <- fa.parallel(tetra_corr, n.obs = nrow(nps_matrix), fm = "minres", fa = "fa")
+
+```
+The suggested number of latent factors based on the screen plot is `r screeout$nfact`. 
+
+#### EFA model fit - `r screeout$nfact` latent factors
+```{r fit-efa-nfact, echo=TRUE}
+## Use rotate = "oblimin" if you believe factors may be correlated (likely in psych data).
+## Another rotation method is 'varimax'
+## Use cut = 0.2 to suppress very low loadings in the printout.
+efa_result_nfact <- psych::fa(tetra_corr,
+                              n.obs = nrow(nps_matrix),
+                              nfactors = screeout$nfact,
+                              rotate = "oblimin",
+                              fm = "minres")
+print(efa_result_nfact, digits = 2, cut = 0.2)
+```
+
+
+```{r print-visualize-loadings-nfact}
+## Factor loadings table
+cat("\nComplete factor loadings:\n")
+loadings_table <- unclass(efa_result_nfact$loadings)
+loadings_df <- as.data.frame(loadings_table)
+loadings_df$Variable <- rownames(loadings_df)
+loadings_df$h2 <- efa_result_nfact$communality
+print(round(loadings_df[, setdiff(colnames(loadings_df), "Variable")], 3))
+
+## Visualization of loadings
+    if (screeout$nfact <= 4) {
+        fa.diagram(efa_result_nfact, main = paste("Factor Structure -", currcohort))
+    }
+```
+
+##### Interpretation
+Basic notes on interpreting latent factor results:
+
+ * The latent factors have names MR* because they were extracted using
+   the 'minimal residual' method
+ * loadings: indicate which factor a symptom belongs to. 
+    + More technically, they describe how much of the variance in the observed
+   variable is explained by the factor. They are the regression
+   coefficient of the observed variable on the factor. 
+    + loadings > 0.4 are strong loadings 
+    + Ideally each factor should have 2+ strong loadings. Single-item
+     factors indicate overfitting. The factors could reflect unique
+     variance or noise, not true latent constructs
+    + We shouldn't expect the loadings we're inspecting in the pattern
+     matrix to sum to 1. The squared loadings for a variable across
+     all factors plus the uniqueness (residual variance) should sum to 1 if you're 
+	 working with standardized data. But since our model allows
+     factors to correlation (oblimin rotation), that won't necessarily
+     hold. 
+ * communalities (h2): How much of a symptom’s variance is explained
+   by the latent factors.
+   + Values > 0.4 are decent.
+   + Value of 1 (no unexplained residual variance) is rare and suggests overfitting
+ * Uniqueness (u2) = 1 - h2: Residual variance not explained.
+ * Item complexity -- reflects how many factors a variable loads onto.
+   + Low (≈ 1.0) = Simple structure
+   + Higher (≥ 2.0) = variable loads across multiple factors
+ * SS Loadings: Sum of squared loadings for each factor. Describes the
+ total amount of variance in all variables that the factor accounts
+ for.
+ * Proportion Var: proportion of total variance explained by each
+   factor
+ * Cumulative Var: proportion of variance explained by all factors
+ * Proportion Explained: How much of the explained variance is due to
+   each factor
+ * RMSR: closer to 0 = better
+ * Test of model vs. null = Objective function; 0 = better
+ * Factor score adequacy: how well the factor scores would work in
+   future modeling
+ 
+I pasted the results into ChatGPT to get help interpreting the results from this specific analysis.
+
+ * Factor naming suggestion:
+
+Factor  | Strongest loadings                                              | Suggested label
+------- | --------------------------------------------------------------- | -------------------------------------
+MR1     | Anxiety (0.75), Depression (0.50), NITE (0.39), DISN (0.39)     | Internalizing / Mood-Anxiety
+MR2     | Agitation (0.96), Irritability (0.29), NITE (0.22), DISN (0.20) | Behavioral Reactivity / Agitation
+MR3     | Hallucinations (0.70), Delusions (0.41), Apathy (0.32)          | Psychotic symptoms + Flattening
+ 
+ 
+* Cross-Loading / Complexity Notes:
+   + Agitation loads on both MR1 and MR3 (0.34 and 0.42), showing
+   mixed affiliation — not clearly belonging to one domain.
+   
+* Communalities (h2) and Uniqueness (u2)
+  + agit has excellent explanation (h2 0.93) — clearly a core symptom
+    of MR2
+  + ANX (h2 0.6) and HALL (h2 0.48) have good fit
+  + DEPD, IRR, NITE, DISN, APA, and DEL are more diffuse and weakly explained.
+ 
+ 
+* Fit Statistics
+    + RMSR of 0.02 --> Excellent fit
+    + Variance explained (cumulative)	39%	--> Acceptable, typical for
+    psychological data
+	+ Factor correlations ~0.39–0.55 --> Moderate — justifies oblique
+      rotation
+    + Mean item complexity	1.4	--> Moderate. Some cross-loadings, but
+      acceptable
+
+* Factor Score Adequacy
+  + MR1 has R2 0.73 and min corr of scores 0.47 --> Strong/stable
+    factor
+  + MR2 has R2 of 0.93 and min corr of scores 0.87 --> Very strong -
+    Agitation dominates
+  + MR3 has R2 of 0.64 and min corr of scores 0.28 --> Weaker - may be
+    underdefined by few symptoms
+	  
+* Summary
+This is a well-fitting but uneven model:
+  + Agitation (MR2) forms an extremely strong factor, nearly by itself → risk of overfitting to one item.
+  + MR1 combines internalizing mood/anxiety symptoms.
+  + MR3 appears to be a psychosis factor, though delusions are only moderately loaded.
+ 
+  
+Since MR2 looks to be possibly overfitted, I tried a two-factor model
+as well. 
+
+```{r fit-efa-2, echo=TRUE}
+## Use rotate = "oblimin" if you believe factors may be correlated (likely in psych data).
+## Another rotation method is 'varimax'
+## Use cut = 0.2 to suppress very low loadings in the printout.
+efa_result_2 <- psych::fa(tetra_corr,
+                          nfactors = 2,
+                          n.obs = nrow(nps_matrix),
+                          rotate = "oblimin",
+                          fm = "minres")
+print(efa_result_2, digits = 2, cut = 0.2)
+
+
+```
+
+```{r print-visualize-loadings-2}
+## Factor loadings table
+cat("\nComplete factor loadings:\n")
+loadings_table <- unclass(efa_result_2$loadings)
+loadings_df <- as.data.frame(loadings_table)
+loadings_df$Variable <- rownames(loadings_df)
+loadings_df$h2 <- efa_result_2$communality
+print(round(loadings_df[, setdiff(colnames(loadings_df), "Variable")], 3))
+
+## Visualization of loadings
+fa.diagram(efa_result_2, main = paste("Factor Structure -", currcohort))
+```
+
+
+
+* Factor naming suggestion:
+
+Factor  | Strongest loadings     | Suggested label
+------- | --------------------------------------------------------------------- | -------------------------------------
+MR1     | Agitation, Anxiety, Disinhibition, Nighttime behavior, Irritability   | Behavioral/Emotional Dysregulation
+MR2     | Hallucinations, Delusions, Apathy     |  Psychotic Symptoms / Negative Symptoms
+
+
+ * This 2-factor model is more interpretable than the three-factor model
+  + MR1 captures externalizing and arousal-related symptoms:
+    agitation, anxiety, irritability, disinhibition, nighttime
+    disturbances.
+  + MR2  captures psychotic symptoms (hall, del) and apathy — possibly
+    reflecting a "psychotic-withdrawal" or "psychotic-negative"
+    dimension. 
+
+* Model fit and quality
+ + RMSR of 0.04 --> Excellent
+ + Variance explained (cumulative)  --> Moderate, typical for NPS
+ + Mean item complexity 1.1 --> Excellent, clean loadings (no serious
+   cross-loading) 
+
+* Factor score adequacy
+  + MR1 R2 of 0.73 and min corr of factors 0.47 --> Strong
+  + MR2 R2 of 0.65 and min corr of factors 0.3  --> Acceptable
+
+
+```{r get-scores}
+efa_raw <- psych::fa(
+                      nps_matrix,
+                      nfactors = 2,
+                      rotate = "oblimin",
+                      fm = "minres",
+                      scores = "regression"
+                  )
+factor_scores <- data.table(protsample = rownames(efa_raw$scores),
+                            efa_raw$scores)
+```
+
+Here is the distribution of the each factor score. 
+
+
+```{r visualize-score-distributions, fig.height = 8}
+factorcols <- setdiff(colnames(factor_scores), "protsample")
+nfactors <- length(factorcols)
+
+par(mfrow=c(nfactors, 1))
+invisible(sapply(factorcols, function(afactor) {
+    hist(unlist(factor_scores[, afactor, with = FALSE]),
+         main = afactor, xlab = "", breaks = 30)
+}))
+
+
+```
+
+
+```{r finish}
+write.table(factor_scores, file = outfiles[["factor_scores"]],
+            row.names = FALSE, quote = FALSE, sep = "\t")
+
+saveRDS(efa_result_2, file = outfiles[["rds"]])
+
+```
