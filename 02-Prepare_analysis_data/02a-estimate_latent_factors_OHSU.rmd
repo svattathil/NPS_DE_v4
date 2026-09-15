@@ -59,6 +59,11 @@ parser$add_argument("--max_factors", type="integer", default=4, help="Maximum nu
 args <- parser$parse_args()
 
 currcohort <- "OHSU"
+outdir <- "2_Pipeline/02-Prepare_analysis_data/Latent_factors"
+MyMkdir(outdir)
+## Command to run this script
+thisscript <- "1_Code/02-Prepare_analysis_data/02a-estimate_latent_factors_OHSU.rmd"
+#rmarkdown::render(thisscript, output_dir=outdir, knit_root_dir=getwd(), intermediates_dir=getwd())
 
 ```
 
@@ -78,15 +83,12 @@ infiles <- list(phenos = paste0(indir, "phenos_cleaned_SVs_", currcohort, ".txt"
 
 ```{r define-output}
 ### Files to be created
-outdir <- "2_Pipeline/02-Prepare_analysis_data/Latent_factors"
-MyMkdir(outdir)
+
 outfiles <- list(factor_scores  = file.path(outdir, paste0("factor_scores_", currcohort, ".txt")),
                  rds            = file.path(outdir, paste0("efa_obj_", currcohort, ".rds"))
                  )
 
-## Command to run this script
-thisscript <- "1_Code/02-Prepare_analysis_data/02a-estimate_latent_factors_OHSU.rmd"
-#rmarkdown::render(thisscript, output_dir=outdir, knit_root_dir=getwd(), intermediates_dir=getwd())
+
 ```
 
 
