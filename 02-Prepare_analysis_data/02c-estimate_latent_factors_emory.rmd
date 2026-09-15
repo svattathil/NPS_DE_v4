@@ -58,7 +58,7 @@ parser$add_argument("--max_factors", type="integer", default=4, help="Maximum nu
 ## Read from parser
 args <- parser$parse_args()
 
-currcohort <- "OHSU"
+currcohort <- "emory"
 
 ```
 
@@ -85,7 +85,7 @@ outfiles <- list(factor_scores  = file.path(outdir, paste0("factor_scores_", cur
                  )
 
 ## Command to run this script
-thisscript <- "1_Code/02-Prepare_analysis_data/02a-estimate_latent_factors_OHSU.rmd"
+thisscript <- "1_Code/02-Prepare_analysis_data/02c-estimate_latent_factors_emory.rmd"
 #rmarkdown::render(thisscript, output_dir=outdir, knit_root_dir=getwd(), intermediates_dir=getwd())
 ```
 
@@ -121,29 +121,10 @@ if (sum(complete_cases) < nrow(nps_matrix)) {
 ```
 
 
-```{r calc-tetrachor}
+```{r exploratory-factor-analysis}
 ### Compute tetrachoric correlation matrix
 tetra_corr <- psych::tetrachoric(nps_matrix)$rho
-```
 
-```{r check-corrs}
-
-# 1. Check the tetrachoric matrix itself for near-boundary values
-tetra_corr  # look for any |r| > 0.9, especially involving agit or psych
-
-# 2. Check eigenvalues — negative eigenvalues indicate a non-PD matrix
-# that psych::tetrachoric/fa is smoothing under the hood
-eigen(tetra_corr)$values
-
-# 3. Check joint (pairwise) cell counts for agit and psych against every other item
-for (v in setdiff(colnames(nps_matrix), c("agit"))) {
-  print(v)
-  print(table(nps_matrix[, "agit"], nps_matrix[, v], dnn = c("agit", v)))
-}
-for (v in setdiff(colnames(nps_matrix), c("psych"))) {
-  print(v)
-  print(table(nps_matrix[, "psych"], nps_matrix[, v], dnn = c("psych", v)))
-}
 ```
 
 
@@ -155,28 +136,32 @@ screeout <- fa.parallel(tetra_corr, n.obs = nrow(nps_matrix), fm = "minres", fa 
 ```
 The suggested number of latent factors based on the scree plot is `r screeout$nfact`. 
 
-With 7 NPS domains, we can estimate a 3-factor, 2-factor, or 1-factor
-model.
-
-
-```{r fit-efa, echo=TRUE}
+#### EFA model fit - `r screeout$nfact` latent factors
+```{r fit-efa-nfact, echo=TRUE}
 ## Use rotate = "oblimin" if you believe factors may be correlated (likely in psych data).
 ## Another rotation method is 'varimax'
 ## Use cut = 0.2 to suppress very low loadings in the printout.
-efa_results <- list(rep(NA, 4))
+efa_result_nfact <- psych::fa(tetra_corr,
+                              nfactors = screeout$nfact,
+                              n.obs = nrow(nps_matrix),
+                              rotate = "oblimin",
+                              fm = "minres")
+print(efa_result_nfact, digits = 2, cut = 0.2)
+```
 
-for(curr_n in 1:3) {
-efa_results[[curr_n]] <- psych::fa(tetra_corr,
-                          nfactors = curr_n,
-                          n.obs = nrow(nps_matrix),
-                          rotate = "oblimin",
-                          fm = "minres")
-}
+
+```{r }
+## Factor loadings table
+cat("\nComplete factor loadings:\n")
+PrintCompleteLoadings(efa_result_nfact)
+
+## Visualization of loadings
+fa.diagram(efa_result_nfact, main = paste0(screeout$nfact, "-factor structure -", currcohort))
 
 ```
 
 ##### Interpretation
-### Basic notes on interpreting latent factor results:
+Basic notes on interpreting latent factor results:
 
  * The latent factors have names MR* because they were extracted using
    the 'minimal residual' method
@@ -216,58 +201,17 @@ efa_results[[curr_n]] <- psych::fa(tetra_corr,
    future modeling
  
 
-#### EFA model fit - 3-factor model
-```{r , echo = TRUE}
-curr_n <- 3
-print(efa_results[[curr_n]], digits = 2, cut = 0.2)
 
-cat("\nComplete factor loadings:\n")
-PrintCompleteLoadings(efa_results[[curr_n]])
-
-fa.diagram(efa_results[[curr_n]], main = paste0(curr_n, "-factor Structure -", currcohort))
-
-```
-
-#### EFA model fit - 2-factor model
-```{r , echo = TRUE}
-curr_n <- 2
-print(efa_results[[curr_n]], digits = 2, cut = 0.2)
-
-cat("\nComplete factor loadings:\n")
-PrintCompleteLoadings(efa_results[[curr_n]])
-
-fa.diagram(efa_results[[curr_n]], main = paste0(curr_n, "-factor Structure -", currcohort))
-
-```
-
-#### EFA model fit - 1-factor model
-```{r , echo = TRUE}
-curr_n <- 1
-print(efa_results[[curr_n]], digits = 2, cut = 0.2)
-
-cat("\nComplete factor loadings:\n")
-PrintCompleteLoadings(efa_results[[curr_n]])
-
-fa.diagram(efa_results[[curr_n]], main = paste0(curr_n, "-factor Structure -", currcohort))
-
-```
-
-
-
-```{r get-scores, eval = TRUE}
-factors_to_use <- 1
-
+```{r get-scores}
 factor_scores_obj <- psych::factor.scores(x = nps_matrix,
-                                          f = efa_results[[factors_to_use]],
+                                          f = efa_result_nfact,
                                           method = "regression")
 factor_scores <- data.table(factor_scores_obj$scores, keep.rownames = "protsample")
-
 ```
 
-Here is the distribution of the each factor score. 
+Here is the distribution of each factor score. 
 
-
-```{r visualize-score-distributions, fig.height = 8, eval = TRUE}
+```{r visualize-score-distributions, fig.height = 8}
 factorcols <- setdiff(colnames(factor_scores), "protsample")
 nfactors <- length(factorcols)
 
@@ -281,10 +225,10 @@ invisible(sapply(factorcols, function(afactor) {
 ```
 
 
-```{r finish, eval = TRUE}
+```{r finish}
 write.table(factor_scores, file = outfiles[["factor_scores"]],
             row.names = FALSE, quote = FALSE, sep = "\t")
 
-saveRDS(efa_results[[factors_to_use]], file = outfiles[["rds"]])
+saveRDS(efa_result_nfact, file = outfiles[["rds"]])
 
 ```
