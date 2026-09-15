@@ -35,7 +35,7 @@ parser <- ArgumentParser(description = "limma DE of log2 protein abundance on NP
 
 ## Control model and sample set
 parser$add_argument("--run", default = "basic",
-                    help = "Specify the run.")
+                    help = "Specify the run (basic, severity, males, females, e4_adj)")
 parser$add_argument("--cohort", default = "OHSU",
                     help = "Cohort label used in output file names.")
 ## Control limma
@@ -44,7 +44,8 @@ parser$add_argument("--robust", action = "store_true", default = TRUE,
 parser$add_argument("--trend", action = "store_true", default = FALSE,
                     help = "Use eBayes(trend = TRUE).")
 ## Other controls
-parser$add_argument("--no-diagnostics", dest = "no_diagnostics", action = "store_true", default = FALSE,
+parser$add_argument("--no-diagnostics", dest = "no_diagnostics", action = "store_true",
+                    default = FALSE,
                     help = "Skip per-domain p-value / plotSA diagnostics.")
 parser$add_argument("--plot-width", dest = "plot_width", type = "double", default = 11,
                     help = "Diagnostic PNG width in inches [11].")
@@ -60,8 +61,10 @@ set.seed(args$seed)
 
 ### Files that exist
 infiles <- list(
-    phenos = paste0("2_Pipeline/02-Prepare_analysis_data/phenos_cleaned_SVs_", args$cohort, ".txt"),
-    prot = "2_Pipeline/01-Explore_data/prot.pcafiltered.log2norm.txt"
+    phenos = paste0("2_Pipeline/02-Prepare_analysis_data/phenos_cleaned_SVs_",
+                    args$cohort, ".txt"),
+    prot   = "2_Pipeline/01-Explore_data/prot.pcafiltered.log2norm.txt",
+    e4_dat = "0_Data/From_v3/e4_phenos_allcohorts.txt"
 )
 
 ## code to run joint model for conditional and joint F test (for basic run only)
@@ -100,28 +103,38 @@ outfiles[["SA_plot"]] <- function(adomain) {
 ### Set some values based on the run specifics
 ### ( More of this happens later also)
 ## npsvars for this run
-if(args$run == "severity") { npsvars <- npsvars.sev
+if(args$run == "severity") {
+    npsvars <- npsvars.sev
 } else {
     npsvars <- npsvars.bin
 }
-
-if (args$run %in% c("males", "females")) {
-    covars <- c("Batch", "pmi", "age_death") ## SVs will be added on the fly
-    fac_covars <- c("Batch")  ## will be set as a factor
-} else {
-    covars <- c("Batch", "pmi", "age_death", "msex") ## SVs will be added on the fly
-    fac_covars <- c("Batch")  ## will be set as a factor
-}
-
 
 ## min non-missing donors to keep protein in analysis
 mincount <- ifelse(args$run %in% c("males", "females"), 25, 50)
 
 
+## covars for this run
+## SVs will be added on the fly
+if(args$run %in% c("males", "females")) {
+    covars <- c("Batch", "pmi", "age_death")
+    fac_covars <- c("Batch")
+}
+
+if(args$run %in% c("basic", "severity")) {
+    covars <- c("Batch", "pmi", "age_death", "msex")
+    fac_covars <- c("Batch")
+}
+
+if(args$run %in% c("e4_adj")) {
+    covars <- c("Batch", "pmi", "age_death", "msex", "e4_expression")
+    fac_covars <- c("Batch")
+}
+
+
 ### Read data
 pheno <- fread(infiles$pheno)
 prot <- fread(infiles$prot)
-
+e4_dat <- fread(infiles$e4_dat)
 
 ### Prepare data
 sample_id_col <- "protsample"
@@ -131,6 +144,10 @@ protein_id_col <- names(prot)[1]
 pheno.orig <- copy(pheno)
 oldsvs <- grep("SV", names(pheno.orig), value = TRUE)
 pheno[, (oldsvs) := NULL]
+
+
+## Merge in e4 expression
+pheno[e4_dat, e4_expression := i.e4_expression, on = "protsample"]
 
 
 ## Filter if necessary for this run
@@ -206,7 +223,8 @@ for (dom in npsvars) {
 
     ## Estimate SVs and define model
     sv     <- Estimate_svs(protected_vars = dom, pheno_dt = sub_pdat, sample_ids = samples)
-    design <- Build_design(predictors = dom, covariates = covars, pheno_dt = sub_pdat, sample_ids = samples, svs = sv)
+    design <- Build_design(predictors = dom, covariates = covars,
+                           pheno_dt = sub_pdat, sample_ids = samples, svs = sv)
 
     coef_name <- make.names(dom)
     if (!coef_name %in% colnames(design)) {
@@ -256,11 +274,20 @@ for (dom in npsvars) {
                 ", df.prior = ", signif(diag_list[[dom]]$df_prior, 3))
     }
 
+
+    ## calculate inflation factor
+    chisq.all <- qchisq(res[, P.Value], 1, lower.tail=FALSE)
+    lambda.median.all <- median(chisq.all) / qchisq(0.5,1)
+    lambdatext.all <- bquote(lambda ~ '=' ~ .(signif(lambda.median.all, 4)))
+
+
     ##  Draw qq plot
     n.na <- sum(is.na(res$P.Value))
     titleqq <- paste0(dom, "\n", "N=", nrow(sub_pdat))
     if(n.na > 0) { titleqq <- paste0(titleqq, "; excluding ", n.na, " proteins with NA P-value") }
-    qq_list[[dom]] <- qqunif.plot(res[!is.na(P.Value), P.Value], maintitle=titleqq)
+    qq_list[[dom]] <- qqunif.plot(res[!is.na(P.Value), P.Value],
+                                  maintitle=titleqq, subxlab=lambdatext.all,
+                                  par.settings=list(par.sub.text=list(cex=1)))
 }
 
 
@@ -325,4 +352,4 @@ if (!args$no_diagnostics) {
 
 pdf(file.path(outdir, outfiles$qq), height = 7, width = 7)
 for (i in qq_list) { print(i) }
-dev.off()
+invisible(dev.off())

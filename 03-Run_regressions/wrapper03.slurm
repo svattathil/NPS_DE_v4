@@ -52,7 +52,7 @@ run_regressions01() {
     done
 }
 
-
+: << 'EOF'
 ## Basic model
 run_regressions01 basic
 Rscript $scriptdir/02a-run-metafor.r --run basic
@@ -71,3 +71,14 @@ Rscript $scriptdir/aggregate_stats_to_excel.r --run males
 
 run_regressions01 females
 Rscript $scriptdir/aggregate_stats_to_excel.r --run females
+
+## Sensitivity - adjust e4 expression
+run_regressions01 e4_adj
+Rscript $scriptdir/02a-run-metafor.r --run e4_adj
+
+EOF
+
+for acohort in OHSU #rush emory
+do
+    Rscript $scriptdir/03a-run_multivariate.r --cohort $acohort
+done

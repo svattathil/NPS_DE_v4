@@ -31,7 +31,7 @@ parser$add_argument("--SE_type", type="character", default="SE_mod", help = "SE_
 args <- parser$parse_args()
 
 ## Define outcomes and subset of cohorts (if necessary)
-if(args$run %in% c("basic", "cond_ind",  "adj_e4_exp", "adj_e4_count", "stratify_e4_any")) {
+if(args$run %in% c("basic", "cond_ind",  "e4_adj")) {
     npsvars <- npsvars.bin
 }
 
@@ -44,11 +44,10 @@ if(args$run %in% c("severity")) {
 ### Files that exist
 resdir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", Capwords(args$run), "/")
 
-if(args$run %in% c("basic", "severity")) {
-    Statsfile <- function(acohort) {  paste0(resdir, acohort, "_", args$run, ".tsv") }
-}
-if(args$run == "cond_ind") {
+if(args$run %in% "cond_ind") {
     Statsfile <- function(acohort) {  paste0(resdir, acohort, "_joint_perDomain.tsv") }
+}else {
+    Statsfile <- function(acohort) {  paste0(resdir, acohort, "_", args$run, ".tsv") }
 }
 
 
