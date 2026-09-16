@@ -1,0 +1,817 @@
+---
+author: "Selina Vattathil"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r goal, include = FALSE}
+###### GOAL ######
+```
+
+
+```{r online-resources, include = FALSE}
+## WGCNA package documentation
+## https://www.rdocumentation.org/packages/WGCNA/versions/1.73
+
+## one tutorial (there are many online)
+## https://bioinformaticsworkbook.org/tutorials/wgcna.html#gsc.tab=0
+
+## hub gene selection
+## https://support.bioconductor.org/p/69858/#70116
+```
+
+
+```{r load-packages, include = FALSE}
+library(data.table)
+library(argparse)
+library(WGCNA)
+library(ggplot2)
+library(stringr)
+
+rm(list = ls())
+```
+
+
+```{r functions, include = FALSE}
+###### FUNCTIONS ######
+source("~/comsv/Svattathil_Library/svattathil_functions.r")
+
+PrepareDataME <- function(modulename, aphenodata, amedata) {
+    ## Extract eigengene for current module and add protsample as column
+    mes.to.merge <- data.frame(protsample=rownames(amedata), 
+                               mod.eigen=amedata[,modulename])
+
+    ## Add eigengene column to phenos
+    merged <- merge(mes.to.merge, aphenodata, by = "protsample")
+
+    ## Convert to data frame and add protsample as rownames
+    samps <- merged$protsample
+    setDF(merged)
+    rownames(merged) <- samps
+    return(merged)
+}
+
+GetCoefficientAndSE <- function(regression.out, type, var="miRNA") {
+    if(type=="ordinal") {
+        return(summary(regression.out)$coefficients[var, c("Value", "Std. Error")]) }
+    else if(type %in% c("gaussian", "binomial", "lmm")) {
+            return(summary(regression.out)$coefficients[var, c("Estimate", "Std. Error")])
+        }
+}
+
+GetPvalue <- function(regression.out, type, var="miRNA") {
+    if(type=="ordinal") {
+        return(pnorm(abs(summary(regression.out)$coefficient[var, "t value"]),
+                     lower.tail=FALSE) * 2) }
+    else if(type %in% c("binomial", "neg.binomial")) {
+                         summary(regression.out)$coefficients[var, "Pr(>|z|)"] }
+    else if(type %in% c("gaussian", "lmm")) {
+                             summary(regression.out)$coefficients[var, "Pr(>|t|)"] }
+}
+
+```
+	
+		
+```{r setup, include = FALSE}
+###### SETUP ######
+### Command line arguments
+## Create parser
+parser <- ArgumentParser()
+parser$add_argument("--cohort", type="character",
+                    help="OHSU, rush, or emory", default = "emory")
+parser$add_argument("--softpower", type="integer",
+                    help="value for softpower", default = 9)
+parser$add_argument("--cutheight", type="double",
+                    help="value for mergeCutHeight", default = 0.30)
+parser$add_argument("--network_set", type="character",
+                    help="cohort-specific or consensus", default = "cohort-specific")
+
+## Read from parser
+args <- parser$parse_args()
+
+
+### Constants
+options(stringsAsFactors = FALSE)
+source("1_Code/project_constants.r")
+nps <- as.character(npsvars.bin)
+
+```
+
+```{r manual-definitions, include = FALSE}
+### Choose a cutting height for defining sample outliers
+## based on the sample dendrogram
+if(args$cohort %in% c("OHSU", "emory")) {
+    clust.height <- 0
+}
+
+if(args$cohort == "rush") {
+    clust.height <- 180
+}
+
+```
+
+---
+title: "WGCNA for `r args$cohort` -- mergeCutHeight `r args$cutheight`" 
+---
+
+
+```{r global-chunk-settings-1, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=TRUE, message=TRUE, include=TRUE, collapse=TRUE)
+```
+
+
+```{r word-document-settings-1, include=FALSE, eval=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4)
+```
+
+
+```{r html-document-settings-1, include=FALSE, eval=TRUE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4)
+```
+
+
+```{r input}
+### Files that exist
+datdir <- "2_Pipeline/02-Prepare_analysis_data/"
+infiles <- list(
+    resid        = paste0(datdir, "resid_regress_covars_", args$cohort, ".txt"),
+    phenos       = paste0(datdir, "phenos_cleaned_SVs_", args$cohort, ".txt"),
+    shared_genes = "2_Pipeline/04-Build_networks/shared_genes_for_consensus_module.txt"
+)
+```
+	
+	
+```{r output}
+### Files to be created
+outdir <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/",
+                 ifelse(args$network_set == "cohort-specific",
+                        "Cohort-specific/",
+                        "Using_shared_genes/"))
+MyMkdir(outdir)
+MyMkdir(paste0(outdir, "/Module_genes/"))
+
+runid <- paste0(args$cohort, "_softpower", args$softpower,
+                "_cutheight", sprintf("%.2f", args$cutheight))
+if(args$network_set == "consensus") {
+    runid <- paste0("for_consensus_", runid)
+}
+
+outfiles <- lapply(list(
+    conn_stats       = "_gene_conn_stats.txt",
+    regress_stats    = "_eigengene_regress_stats.txt",
+    hubgenes         = "_hub_genes.txt",
+    n_genes          = "_module_gene_counts.txt", 
+    eigengenes       = "_eigengenes.txt",
+    sigmodules       = "_associated_modules.txt",
+    background_genes = "_background_genes.txt", 
+    log              = ".log",
+    adj_df           = "_protein_adjacency_matrix.txt",
+    adj_log          = "_protein_adjacency_matrix.log",
+    tombase          = "_tom",
+    protdat          = "_expr_data.txt"
+), function(x) { paste0(outdir, runid, x) })
+
+## Will also write full list of module genes for each module
+Outfile_module_genes <-  function(module) {
+    paste0(outdir, "Module_genes/", runid, "_module_genes_", module, ".txt") }
+```
+
+
+```{r read-data}
+###### MAIN ######
+### Read in data
+resid.all <- fread(infiles[["resid"]])
+phenos.all <- fread(infiles[["phenos"]])
+if(args$network_set == "consensus") { 
+    shared_genes <- scan(infiles[["shared_genes"]], what = "")
+}
+```
+
+
+```{r prepare-data}
+### Prepare data
+## Restrict phenos to samples in resid data (because they did different filtering)
+phenos <- phenos.all[protsample %in% colnames(resid.all), ]
+
+## Restrict resid to samples in phenos and convert to
+## matrix with one row per protein and one row per sample
+resid <- as.matrix(resid.all[, phenos$protsample, with = FALSE])
+rownames(resid) <- resid.all$protein
+
+## Select proteins with data for at least 50 participants
+tokeep <- apply(resid, 1, function(x) {sum(!is.na(x)) > 50 })
+forzobs <- resid[tokeep, ]
+
+## If preparing for consensus module,  filter to proteins shared across cohorts
+if(args$network_set == "consensus") {
+    forzobs <- forzobs[rownames(forzobs) %in% shared_genes, ]
+}
+
+## Z-scale
+zobs <- t(apply(forzobs, 1, scale))
+rownames(zobs) <- rownames(forzobs)
+colnames(zobs) <- colnames(forzobs)
+
+## Make sure proteins are sorted alphabetically
+zobs <- zobs[sort(rownames(zobs)), ]
+
+```
+
+
+# WGCNA parameters
+
+These I experimented with:
+
+* softpower:         `r args$softpower`
+* mergeCutHeight:    `r args$cutheight`
+
+
+These I left the same across runs:
+
+* deepSplit:         4
+* networkType:       signed
+* TOMType:           signed
+* corType:           bicor
+* maxPOutliers:      0.10
+* reassignThreshold: 0
+* pamRespectsDendro: FALSE
+
+# Quality Control
+The input data includes observations for `r pN(ncol(zobs))` participants and 
+`r pN(nrow(zobs))` proteins. 
+
+## Missingness
+WGCNA has built-in filters for gene and sample missingness. 
+
+```{r check-missingness, include=TRUE}
+## Transpose to get matrix in shape that WGCNA expects,
+## which is row per sample and column per protein
+zobs.tr <- t(zobs)
+
+##  Check data for excessive missing values and identification of outlier samples
+gsg <- goodSamplesGenes(zobs.tr, verbose = 3);
+gsg$allOK
+
+## If any, remove the offending genes and samples from the data
+if (!gsg$allOK) {
+    if (sum(!gsg$goodGenes) > 0)
+        printFlush(paste("Removing genes:", paste(colnames(zobs.tr)[!gsg$goodGenes],
+                                                  collapse = ", ")))
+    if (sum(!gsg$goodSamples) > 0)
+        printFlush(paste("Removing samples:", paste(rownames(zobs.tr)[!gsg$goodSamples],
+                                                    collapse = ", ")))
+
+    zobs.tr.filtered <- zobs.tr[gsg$goodSamples, gsg$goodGenes]
+}
+if(gsg$allOK) {
+    zobs.tr.filtered <- zobs.tr[gsg$goodSamples, gsg$goodGenes]
+}
+```
+
+The missingness filters left `r pN(nrow(zobs.tr.filtered))` participants and 
+`r pN(ncol(zobs.tr.filtered))` genes. 
+
+
+```{r transpose}
+## zobs.tr.filtered has one row per sample and column per protein
+dotransp <- FALSE
+
+if(!dotransp) {
+    ## don't transpose to keep one row per sample and one column per protein
+    dat0 <- zobs.tr.filtered
+}
+
+if(dotransp) {
+    ## transpose to keep one row per protein and one column per sample
+    dat0 <- t(zobs.tr.filtered)
+}
+```
+
+
+## Visual check - outlier samples 
+WGCNA includes a function to perform hierarchical
+clustering on the expression data to visually identify outlier
+samples. 
+
+```{r check-sample-outliers, include="TRUE", results="hide"}
+## Cluster elements to check for obvious outliers
+## and plot the tree
+obstree <- hclust(dist(dat0), method = "average");
+
+par(cex = 0.6, mar = c(0,4,2,0))
+plot(obstree, main = "Clustering to detect outliers", sub="",
+     xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 2)
+
+##** See clust.height definitions in MANUAL DEFINITIONS section **##
+
+## Draw line for cut threshold
+## and define sample clusters using specified cutHeight
+abline(h = clust.height, col = "red")
+clust <- cutreeStatic(obstree, cutHeight = clust.height, minSize = 10)
+clusttab <- (table(clust))
+```
+
+
+```{r remove-outliers}
+## Specify which cluster to keep
+## filter data
+## and then re-cluster samples
+cluster.to.keep <- names(clusttab)[which.max(clusttab)]
+keep_samples <- clust==cluster.to.keep
+protdat <- dat0[keep_samples, ]
+noutliers <- sum(!keep_samples)
+obstree2 <- hclust(dist(protdat), method = "average")
+```
+
+
+Based on the tree shape, I chose a cut height of `r clust.height`. 
+This removed `r noutliers` outlier samples, leaving 
+`r nrow(protdat)` samples for analysis. 
+
+## Visual check - phenotype correlation 
+We can use the sample dendrogram to visually check for 
+variables that correlate with sample groupings,
+indicating potential batch or other confounding effects. 
+
+```{r visualize-phenos-on-clusters, include=TRUE, eval = TRUE}
+## Extract categorical variables
+## convert each to a factor
+phenos.basic <- phenos[protsample %in% rownames(protdat),
+                       intersect(c("protsample", "Batch", "msex", "clinical_dx"),
+                                 names(phenos)), with=FALSE]
+sampnames <- phenos.basic$protsample
+phenos.basic[, protsample := NULL] # remove protsample column after extracting sampnames
+setDF(phenos.basic)
+rownames(phenos.basic) <- sampnames
+
+## Convert values to factors
+for(apheno in names(phenos.basic)) { phenos.basic[,apheno] <- factor(phenos.basic[,apheno]) }
+
+## Verify that rownames match between protein and trait data
+all(rownames(phenos.basic) == rownames(protdat))
+
+## Convert traits to a color representation:
+## white means low, red means high, grey means missing entry
+trait_colors <- sapply(colnames(phenos.basic), function(apheno) {
+    labels2colors(phenos.basic[,apheno])     
+})
+
+## Draw dendrogram with variable values as colors
+plotDendroAndColors(obstree2, trait_colors,
+                    groupLabels = colnames(trait_colors),
+                    dendroLabels = FALSE,
+                    cex.dendroLabels = 0.2,
+                    main = "Sample dendrogram and trait heatmap")
+```
+
+
+# Network Construction and Module Detection 
+## Choose soft threshold 
+First, use the `pickSoftThreshold` function to calculate the scale-free
+topology fit index and connectivity over a range of candidate soft
+threshold values. 
+
+```{r test-soft-thresholds}
+powersvec <- c(c(1:10), seq(from = 12, to=20, by=2))
+sft <- pickSoftThreshold(protdat, powerVector = powersvec, verbose = 5)
+
+## Extract fit indices
+fitindices <- data.table(sft$fitIndices)
+```
+
+
+```{r visualize-soft-thresholds, include=TRUE}
+par(mfrow = c(1,2), mar=c(5,4,4,4))
+cex1 = 0.9
+
+## Define signed r2 
+r2forplot <- -sign(fitindices[, slope])*fitindices[, SFT.R.sq]
+
+## Plot power v. model fit
+plot(fitindices[, Power], r2forplot,
+     xlab = "Soft Threshold (power)",
+     ylab = "Scale Free Topology Model Fit,signed R^2",
+     type = "n",
+     main = paste("Scale independence"))
+text(fitindices[, Power], r2forplot, labels = powersvec, cex = cex1, col = "red");
+abline(h = 0.90, col = "red") # this line corresponds to using an R^2 cut-off of h
+
+## Plot power v. connectivity
+plot(fitindices[, Power], fitindices[, mean.k.],
+     xlab = "Soft Threshold (power)",
+     ylab = "Mean Connectivity",
+     type="n",
+     main = paste("Mean connectivity"))
+text(fitindices[, Power], fitindices[, mean.k.], labels = powersvec, cex=cex1, col="red")
+
+```
+
+
+The WGCNA tutorial recommends choosing the lowest soft threshold value
+after the scale-free topology model fit levels off, as long as it is
+above 0.8. The red horizontal line indicates r2 of 0.9. 
+Here, based on the plot, I chose a value of 
+`r args$softpower`.
+
+## Use one-step network construction and module detection function 
+The easiest way to construct the network is to use the one-step
+function. In addition to the parameter `power` for which we have
+chosen the value of `r args$softpower` based on the plots
+above, We can set values for some other potentially important parameters 
+for the network construction -- see function call below for all values. 
+
+```{r one-step-construction, results=FALSE, echo=TRUE}
+net <- blockwiseModules(protdat,
+                        power = args$softpower,
+                        corType = "bicor",
+                        networkType = "signed",
+                        TOMType = "signed",
+                        maxBlockSize = 10000,
+                        maxPOutliers = 0.10, 
+                        minModuleSize = 20,
+                        reassignThreshold = 0,
+                        deepSplit = 4,
+                        mergeCutHeight = args$cutheight,
+                        numericLabels = FALSE,
+                        pamRespectsDendro = FALSE,
+                        saveTOMs = TRUE,
+                        saveTOMFileBase = outfiles$tombase,
+                        verbose = 3)
+
+## Extract adjacency matrix
+adj_mat <- adjacency(protdat,
+                     power = args$softpower,
+                     corFnc = "bicor",
+                     type = "signed",                     
+                     corOptions = list(use = 'pairwise.complete.obs'))
+
+```
+
+
+# Diagnostics
+
+```{r get-module-colors}
+moduleColors <- net$colors
+nmodules <- length(unique(moduleColors))
+```
+
+
+The automatic network construction identified 
+`r nmodules-1` modules, not including the grey 'module'. 
+
+## Network dendrogram 
+
+```{r visualize-network, include=TRUE}
+plotDendroAndColors(dendro = net$dendrograms[[1]],
+                    colors = moduleColors[net$blockGenes[[1]]],
+                    "Module colors",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05)
+```
+
+
+## Number of proteins per module 
+
+```{r visualize-module-sizes-barplot, include=TRUE}
+## Draw barplot of the number of proteins per module
+par(mar = c(5,5,5,5))
+toplot <- sort(table(moduleColors), decreasing=TRUE)
+toplot <- toplot[c("grey", names(toplot)[!names(toplot) %in% "grey"])]
+colors.ordered <- names(toplot)
+
+toplot.df <- data.frame(module = names(toplot),
+                        value = as.numeric(toplot),
+                        modcolor = colors.ordered)
+toplot.df$module <- factor(toplot.df$module, levels = toplot.df$module)
+
+
+ggplot(toplot.df, aes(x = module, y = value, fill = modcolor)) +
+    geom_bar(stat = "identity") +
+    scale_fill_identity() +
+    geom_text(aes(label = value), vjust = -0.3, size = 3) +
+    theme_minimal() +
+    theme(
+        axis.text.x = element_text(angle = 45, hjust = 1)
+    ) +
+    labs(x = "Module", y = "Number of proteins", title = "Protein count per module")
+```
+
+
+## Module membership
+There are few different metrics for characterizing proteins. 
+
+* kME -- also known as module membership, this is the correlation
+  between protein and the module eigengene. We can
+  calculate kME between the protein and any
+  module eigengene, but we probably want to look at it for the module to which
+  the protein has been assigned. 
+
+* kIM -- also known as intramodule connectivity, this is the sum of the adjacencies to
+  the other proteins in the same module. 
+  
+* soft connectivity -- the sum of the adjacencies to all other nodes 
+
+```{r calculate-eigengenes, include=FALSE}
+## Calculate eigengene for each modulue
+MEList <- moduleEigengenes(protdat, colors = moduleColors)
+MEs0 <- MEList$eigengenes
+MEs <- orderMEs(MEs0)
+rm(list = c("MEList", "MEs0")) # remove tmp objects
+
+eigengenes_forprint <- MEs
+eigengenes_forprint$protsample <- rownames(eigengenes_forprint)
+setDT(eigengenes_forprint)
+setcolorder(eigengenes_forprint, "protsample")
+```
+
+
+```{r calculate-connectivities, include=FALSE}
+### Calculate kME for each protein to every eigengene
+kMEs <- data.table(protein = colnames(protdat),
+                   signedKME(datExpr = protdat,
+                             datME = MEs))
+
+## Calculate connectivities -- whole network, within module, outside module
+## From adjacency matrix
+intramod_conn.adj <- data.table(
+    protein = colnames(protdat),
+    intramodularConnectivity(
+    adj_mat,
+    colors = moduleColors
+    )
+)
+
+## Make merged table with connectivity stats and assigned module
+conn_stats <- merge(data.table(protein = names(moduleColors), module = moduleColors),
+                    intramod_conn.adj,                        
+                    by = "protein")
+
+## Add the kME of each protein to its assigned module
+for(amod in colors.ordered) {
+    for(aprotein in conn_stats[module == amod, protein]) {
+        conn_stats[protein == aprotein, kME := kMEs[protein == aprotein, paste0("kME", amod),
+                                                    with = FALSE]]
+    }
+}
+```
+
+
+Here is the distribution of kMEs per module. 
+```{r visualize-kME, eval=TRUE, fig.height=10, fig.width = 9, eval = FALSE}
+par(mfrow=c(ceiling(nmodules/4),4)) # define number of rows based on number of modules
+for(acolor in c(setdiff(colors.ordered, "grey"), "grey")) { ## plot grey module last
+    hist(conn_stats[module == acolor, kME],
+         col=acolor, xlim=c(-1,1), main=acolor, xlab="")
+}
+```
+
+
+
+```{r visualize-kIM, include=TRUE, eval = FALSE}
+## Then we can look at the intramodule connectivities per module,
+## but these should probably be scaled because proteins in larger modules
+## will have larger values since it is a sum
+par(mfrow=c(ceiling(nmodules/4),4), oma=c(1,1,3,1)) # define num rows based on number of modules
+for(acolor in c(setdiff(colors.ordered, "grey"), "grey")) { ## plot grey module last
+    axlim=c(0, max(conn_stats[,"kWithin"], na.rm=TRUE))
+    tmptoplot <- conn_stats[module==acolor, kWithin]
+    hist(tmptoplot, xlim=axlim, col=acolor, main=acolor, xlab="within module connectivity")
+    rm(list=c("tmptoplot", "axlim"))
+}
+
+mtext("Distribution of intramodule connectivity per module", outer=TRUE)
+```
+
+
+# Module association with individual NPS 
+Here we test association between each module eigengene and our traits
+of interest. 
+
+```{r run-regressions, include=FALSE}
+### Set up object to hold regression results
+allsumms <- vector(mode="list")
+save.regression.results <- FALSE
+
+### Iterate over outcomes
+for(anps in nps) {
+    aform <- paste0(anps, "~ mod.eigen")
+    atype <- "binomial"
+
+    ## run regression for each module (exclude grey)
+    regression.results <- lapply(setdiff(colnames(MEs), "grey"), function(amodule) {
+        regression_data <- PrepareDataME(amodule, phenos, MEs)
+        res.onemodule <- glm(form = aform, data = regression_data, family = "binomial")
+        return(res.onemodule)
+    })
+    
+    ## Summarize results for this outcome
+    regression.summ <- data.frame(
+        coeff.stderr = t(sapply(regression.results,
+                                GetCoefficientAndSE, type=atype, var="mod.eigen")),
+        pvalues = sapply(regression.results, GetPvalue, type=atype, var="mod.eigen"))
+    colnames(regression.summ) <- c("Estimate", "Std.Err", "Pvalue")
+    rownames(regression.summ) <- colnames(MEs)
+
+    ## Clean up
+    print(paste(" model", anps, "--", "Cleaning up"))
+    allsumms[[anps]] <- regression.summ
+    rm(list=c("regression.results", "regression.summ", "aform", "atype"))
+}
+
+names(allsumms) <- nps
+
+### Prepare results for matrix visualization
+coeffs <- Reduce(cbind, lapply(allsumms, function(x) {signif(x$Estimate, 2) }))
+pvals <- Reduce(cbind, lapply(allsumms, function(x) {signif(x$Pvalue, 2) }))
+rownames(pvals) <- rownames(coeffs) <- colnames(MEs)
+colnames(pvals) <- colnames(coeffs) <- names(allsumms)
+
+textMatrix.regression <- paste0(coeffs, "\n(",
+                                pvals,  ")")
+dim(textMatrix.regression) <- dim(coeffs)
+
+## Get index for smallest p-value
+minind <- which(pvals==min(pvals), arr.ind=TRUE)
+
+ntests <- nrow(pvals) * ncol(pvals)
+bonfthresh <- 0.05/ntests
+
+```
+
+
+The heatmap is colored by the regression coefficient. The association
+p-value is given in parentheses.
+
+The smallest p-value is `r sprintf("%.1e", min(pvals))`, for the association between 
+eigengene `r rownames(pvals)[minind[1]] ` and
+`r colnames(pvals)[minind[2]]`. 
+
+The number of tests is `r ntests`, and the Bonferroni threshold at alpha 0.05
+is `r sprintf("%.1e", bonfthresh)`.
+
+```{r visualize-association-results, include=TRUE, fig.height=11}
+par(mar = c(6, 8.5, 3, 3))
+zmax <- max(abs(coeffs))
+
+labeledHeatmap(Matrix = coeffs,
+               xLabels = names(allsumms),
+               yLabels = names(MEs),
+               ySymbols = names(MEs),
+               colorLabels = FALSE,
+               colors = colorRampPalette(c("blue", "white", "red"))(30),
+               textMatrix = textMatrix.regression,
+               setStdMargins = FALSE,
+               cex.text = 0.5,
+               zlim = c(zmax*-1, zmax),
+               main = paste("Module-trait relationships (NPS ~ eigengene + sex)"))
+```
+
+
+
+```{r identify-sig-modules}
+### Reformat association p-values to data table with module as column
+pvals_dt <- data.frame(pvals)
+pvals_dt$module <- sapply(rownames(pvals), function(x) { gsub("ME", "", x) })
+setDT(pvals_dt)
+setnames(pvals_dt, nps, paste0("pval_", nps))
+
+## Get min p-value and corresponding NPS for each module
+pval_cols <- paste0("pval_", nps)
+pvals_dt[, `:=` (
+    min_p = do.call(pmin, c(.SD, list()))
+    ), .SDcols = pval_cols]
+
+### Identify significant module-NPS association at several thresholds
+Getsig <- function(pvalrow, sigthresh = 0.05) {
+    ## get vector of pval_col names
+    vec <- pval_cols[which(pvalrow < sigthresh)] 
+
+    # reformat as comma-delimited list of NPS names
+    paste(sapply(vec, function(x) { gsub("pval_", "", x) }), collapse = ", ") 
+}
+
+pvals_dt[, NPS_sig05 := apply(.SD, 1, Getsig, sigthresh = 0.05), .SDcols = pval_cols]
+pvals_dt[, NPS_sig01 := apply(.SD, 1, Getsig, sigthresh = 0.01), .SDcols = pval_cols]
+setcolorder(pvals_dt, c("module", "min_p", "NPS_sig05", "NPS_sig01"))
+pvals_dt[, module := factor(module, levels = colors.ordered)]
+setorder(pvals_dt, module)
+```
+
+Here are the modules that are significant at various thresholds. There
+are 
+`r sum(pvals_dt[, min_p < 0.05])` and 
+`r sum(pvals_dt[, min_p < 0.01])` modules with significant association
+at nominal p-values 0.05 and 0.01,
+respectively. 
+
+
+```{r table-sig-modules}
+knitr::kable(pvals_dt)
+```
+
+
+```{r extract-hub-genes}
+### Extract hub genes
+hubgenes <- conn_stats[module != "grey" & kME > 0.7, .(protein, module, kME)]
+hubgenes[, module := factor(module, levels = colors.ordered)]
+setorder(hubgenes, module, -kME)
+hubgenes[, gene_symbol := sapply(protein, function(x) {
+    unlist(strsplit(x, split = "\\|"))[1] })]
+
+
+### Make table of total gene counts and hub gene counts
+n_genes <- merge(data.table(table(conn_stats$module))[, .(module = V1, n_total_genes = N)],
+                 data.table(table(hubgenes$module))[, .(module = V1, n_hub_genes = N)],
+                 by = "module")
+
+n_genes[, module := factor(module, levels = colors.ordered)]
+setorder(n_genes, module)
+
+```
+
+```{r make-background-gene-list}
+background_genes <- data.table(protein = colnames(protdat))
+background_genes[, gene_symbol := sapply(protein, function(x) {
+    unlist(strsplit(x, split = "\\|"))[1] })]
+
+## Fill in NA for genes missing gene symbol in protein name
+background_genes[gene_symbol == "", gene_symbol := NA]
+
+```
+
+
+```{r finish}
+### Write proteins connectivity stats
+write.table(conn_stats, file = outfiles[["conn_stats"]],
+            row.names = FALSE, quote = FALSE, sep = "\t")
+
+
+### Write eigengenes
+write.table(eigengenes_forprint, file = outfiles[["eigengenes"]],
+            row.names = FALSE, quote = FALSE, sep = "\t")
+
+
+### Write hub gene stats
+write.table(hubgenes, file = outfiles[["hubgenes"]],
+            row.names = FALSE, quote = FALSE, sep = "\t")
+
+
+### Write gene counts
+write.table(n_genes, file = outfiles[["n_genes"]], 
+            row.names = FALSE, quote = FALSE, sep = "\t")
+
+
+### Prepare then write regression stats
+coeffs.dt <- data.frame(coeffs)
+pvals.dt <- data.frame(pvals)
+coeffs.dt$module <- rownames(coeffs)
+pvals.dt$module <- rownames(pvals)
+setDT(coeffs.dt)
+setDT(pvals.dt)
+setnames(coeffs.dt, nps, paste0(nps, "_coeff"))
+setnames(pvals.dt, nps, paste0(nps, "_pval"))
+
+regress_stats <- merge(coeffs.dt, pvals.dt, by = "module")
+
+write.table(regress_stats, file = outfiles[["regress_stats"]],
+            row.names = FALSE, quote = FALSE, sep = "\t")
+
+
+### Write significant module-trait association table
+write.table(pvals_dt, file = outfiles[["sigmodules"]],
+            row.names = FALSE, quote = FALSE, sep = "\t")
+
+
+### Write module genes for modules with nominally significant NPS association
+invisible(sapply(as.character(pvals_dt[!NPS_sig05 == "", module]), function(amodule) {
+    proteins <- conn_stats[module == amodule, protein ]
+    genes <- sapply(proteins, function(x) { unlist(strsplit(x, split = "\\|"))[1] })
+    write(genes, ncol = 1, file = Outfile_module_genes(amodule))
+}))
+
+
+### Write log
+write(paste0("Number of modules significantly associated with NPS"), file = outfiles[["log"]])
+write(paste0("     at p-value < 0.05: ",
+             sum(pvals_dt[, min_p < 0.05])), file = outfiles[["log"]], append = TRUE)
+write(paste0("     at p-value < 0.01: ",
+             sum(pvals_dt[, min_p < 0.01])), file = outfiles[["log"]], append = TRUE)
+
+### Write background genes list
+write.table(background_genes[, .(gene_symbol)], file = outfiles[["background_genes"]],
+            row.names = FALSE,
+            quote = FALSE, sep = "\t", col.names = FALSE)
+
+### Write adjacency matrix
+write.table(adj_mat, file = outfiles[["adj_df"]],
+            row.names = TRUE, quote = FALSE, sep = "\t")
+
+### Write expression data
+protdat_forprint <- as.data.frame(protdat)
+protdat_forprint$protsample <- rownames(protdat)
+setDT(protdat_forprint)
+setcolorder(protdat_forprint, "protsample")
+fwrite(protdat_forprint, file = outfiles[["protdat"]],
+       row.names = FALSE, quote = FALSE, sep = "\t")
+```

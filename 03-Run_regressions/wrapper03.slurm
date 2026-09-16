@@ -79,9 +79,11 @@ Rscript $scriptdir/aggregate_stats_to_excel.r --run females
 run_limma_script01 e4_adj
 Rscript $scriptdir/02a-run-metafor.r --run e4_adj
 
-: << 'EOF'
+
 for acohort in rush emory #OHSU #
 do
     Rscript $scriptdir/03a-run_multivariate.r --cohort $acohort
 done
-EOF
+
+
+

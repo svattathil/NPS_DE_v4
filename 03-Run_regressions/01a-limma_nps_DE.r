@@ -156,7 +156,7 @@ if(args$run == "males") {
 }
 
 if(args$run == "females") {
-    pheno <- pheno[msex == 1, ]
+    pheno <- pheno[msex == 0, ]
 }
 
 ## Do some formatting

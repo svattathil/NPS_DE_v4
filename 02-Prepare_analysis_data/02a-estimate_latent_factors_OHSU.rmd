@@ -87,8 +87,6 @@ infiles <- list(phenos = paste0(indir, "phenos_cleaned_SVs_", currcohort, ".txt"
 outfiles <- list(factor_scores  = file.path(outdir, paste0("factor_scores_", currcohort, ".txt")),
                  rds            = file.path(outdir, paste0("efa_obj_", currcohort, ".rds"))
                  )
-
-
 ```
 
 
@@ -128,7 +126,7 @@ if (sum(complete_cases) < nrow(nps_matrix)) {
 tetra_corr <- psych::tetrachoric(nps_matrix)$rho
 ```
 
-```{r check-corrs}
+```{r check-corrs, eval = FALSE}
 
 # 1. Check the tetrachoric matrix itself for near-boundary values
 tetra_corr  # look for any |r| > 0.9, especially involving agit or psych
