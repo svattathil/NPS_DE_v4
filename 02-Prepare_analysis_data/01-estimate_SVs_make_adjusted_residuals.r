@@ -16,11 +16,8 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 options(stringsAsFactors = FALSE)
 source("1_Code/project_constants.r")
 
-vars_to_regress <- c("Batch", "pmi", "age_death", "msex") ## will also regress SVs
+nuisance_vars <- c("Batch", "pmi", "age_death", "msex")
 vars_to_protect <- c(npsvars.bin)
-
-covars <- unlist(tstrsplit(vars_to_regress, split = "_", keep = 1))
-covarstring <- paste0(Capwords(covars), collapse = "")
 
 
 ###### FUNCTIONS ######
@@ -32,10 +29,26 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 ## Create parser
 parser <- ArgumentParser()
 parser$add_argument("--cohort", type="character", default = "OHSU", help="OHSU, rush, or emory")
-
+parser$add_argument("--option", type = "character", default = "regress_SVs", help = "'regress_SVs' or 'ignore_SVs'")
 
 ## Read from parser
 args <- parser$parse_args()
+
+
+### Set options
+
+if(args$option == "regress_SVs") {
+    ## These are just for filenames
+    covar_labels <- unlist(tstrsplit(nuisance_vars, split = "_", keep = 1))
+    covarstring <- paste0(Capwords(covar_labels), collapse = "")
+    covarstring <- paste0(covarstring, "SVs")
+}
+
+if(args$option == "ignore_SVs") {
+    ## These are just for filenames
+    covar_labels <- unlist(tstrsplit(nuisance_vars, split = "_", keep = 1))
+    covarstring <- paste0(Capwords(covar_labels), collapse = "")
+}
 
 
 ### Files that exist
@@ -50,8 +63,8 @@ outdir <- "2_Pipeline/02-Prepare_analysis_data/"
 MyMkdir(outdir)
 outfiles <- list(
     out.phenos.svs = paste0(outdir, "/phenos_cleaned_SVs_", args$cohort, ".txt"),
-    out.resid = paste0(outdir, "/resid_regress_covars_", args$cohort, ".txt"),
-    out.log = paste0(outdir, "/", "data_cleaning_", args$cohort, ".log"))
+    out.resid = paste0(outdir, "/resid_regress_", covarstring, "_", args$cohort, ".txt"),
+    out.log = paste0(outdir, "/", "data_cleaning_", covarstring, "_", args$cohort, ".log"))
 
 
 ###### MAIN ######
@@ -67,7 +80,9 @@ phenos.orig[, Batch := paste0("Batch", Batch)]
 
 ### Subset proteomics data to samples in phenos file,
 ### which has gone through some filtering
+### This also subsets to the current cohort
 prot.sampfiltered <- prot.orig[, c("protein", phenos.orig$protsample), with = FALSE]
+
 
 ### Get number of non-missing observations per protein
 obscounts <- apply(prot.sampfiltered[, !c("protein")], 1, function(x) { sum(!is.na(x)) })
@@ -79,7 +94,7 @@ prot.countfiltered <- prot.sampfiltered[obscounts >= 50, ]
 ### Estimate SVs
 ## Subset phenos to samples with complete data for phenotype(s) of interest
 nomissing <- phenos.orig[, apply(.SD, 1, function(x) { !any(is.na(x)) }),
-                         .SDcol = c(vars_to_regress, vars_to_protect)]
+                         .SDcol = c(nuisance_vars, vars_to_protect)]
 phenos <- phenos.orig[nomissing, ]
 
 ## filter phenos to samples that are also in the prot data
@@ -103,23 +118,23 @@ if(!(all(phenos$protsample == colnames(edata.countfiltered)))) {
 edata.complete <- edata.countfiltered[complete.cases(edata.countfiltered), ]
 
 ## Specify null and full models
-nullmodel <- as.formula(paste("~ ", paste0(c(vars_to_regress), collapse = "+")))
-fullmodel <- as.formula(paste("~ ", paste0(c(vars_to_protect, vars_to_regress), collapse = "+")))
+nullmodel <- as.formula(paste("~ ", paste0(c(nuisance_vars), collapse = "+")))
+fullmodel <- as.formula(paste("~ ", paste0(c(vars_to_protect, nuisance_vars), collapse = "+")))
 
 
 mod0 <- model.matrix(nullmodel, data = phenos)
-mod <- model.matrix(fullmodel, data = phenos)
+mod  <- model.matrix(fullmodel, data = phenos)
 
 
 ## Apply SVA
 ## Step 1 - determine number of surrogate variables to estimate
-#set.seed(68302)
+                                        #set.seed(68302)
 n.sv <- num.sv(edata.complete, mod, method="be", seed=68302)
 
 ## Step 2 - estimate the surrogate variables
 ## the component svobj$sv is a matrix whose columns correspond to
 ## the estimated surrogate variables
-svobj <- sva(edata.complete, mod, mod0, n.sv=n.sv)
+svobj <- sva(edata.complete, mod = mod, mod0 = mod0, n.sv = n.sv)
 svs <- data.table(svobj$sv)
 sv_names <- paste0("SV", 1:n.sv)
 setnames(svs, sv_names)
@@ -136,11 +151,19 @@ if(!(all(phenos_withsvs$protsample == colnames(edata.countfiltered)))) {
     print("samples match between edata.countfiltered and phenos_withsvs")
 }
 
+
 ### Do cleaning
+if(args$option == "regress_SVs") {
+    vars_to_regress <- c(nuisance_vars, sv_names)
+}
+
+if(args$option == "ignore_SVs") {
+    vars_to_regress <- nuisance_vars
+}
+
 modelform_forcleaning <- as.formula(paste("~ ",
                                           paste0(c(vars_to_protect,
-                                                   vars_to_regress ,
-                                                   sv_names),
+                                                   vars_to_regress),
                                                  collapse = "+")))
 modmat_forcleaning <- model.matrix(modelform_forcleaning, data = phenos_withsvs)
 
@@ -151,7 +174,6 @@ np <- length(vars_to_protect) + 1 ## number of variables to protect (including i
 edata.cleaned <- cleaningY(edata.countfiltered,
                            modmat_forcleaning,
                            P = np)
-
 
 cleaned_forprint <- as.data.table(edata.cleaned, keep.rownames = "protein")
 
@@ -171,7 +193,7 @@ Writelog <- function(s, doappend=TRUE) { write(s, outfiles$out.log, append=doapp
 Writelog(paste(c(args$cohort, paste0("number of SVs: ", n.sv)), collapse = "\t"), doappend=FALSE)
 Writelog(paste0("Subjects dropped due to incomplete phenotype data: ", sum(!nomissing)))
 Writelog(paste0("Subjects with SV estimates: ", sum(nomissing)))
-Writelog(paste0("SVA full model: ", paste0(fullmodel, collapse = " ")))
 Writelog(paste0("SVA null model: ", paste0(nullmodel, collapse = " ")))
+Writelog(paste0("SVA full model: ", paste0(fullmodel, collapse = " ")))
 Writelog(paste0("model for cleaning: ", paste0(modelform_forcleaning, collapse = " ")))
 Writelog(paste0("terms protected during cleaning (including intercept): ", np))
