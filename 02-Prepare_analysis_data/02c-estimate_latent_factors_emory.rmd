@@ -32,6 +32,7 @@ knitr::opts_chunk$set(fig.width=12, fig.height=8)
 ```{r constants}
 options(stringsAsFactors = FALSE)
 source("1_Code/project_constants.r")
+
 ```
 
 ```{r functions, include=FALSE}
@@ -50,19 +51,11 @@ PrintCompleteLoadings <- function(efa_obj) {
 
 
 ```{r command-line}
-### Command line arguments
-## Create parser
-parser <- ArgumentParser()
-parser$add_argument("--max_factors", type="integer", default=4, help="Maximum number of factors to test")
-
-## Read from parser
-args <- parser$parse_args()
-
 currcohort <- "emory"
 outdir <- "2_Pipeline/02-Prepare_analysis_data/Latent_factors"
 MyMkdir(outdir)
-thisscript <- "1_Code/02-Prepare_analysis_data/02c-estimate_latent_factors_emory.rmd"
 ## Command to run this script
+thisscript <- "1_Code/02-Prepare_analysis_data/02c-estimate_latent_factors_emory.rmd"
 #rmarkdown::render(thisscript, output_dir=outdir, knit_root_dir=getwd(), intermediates_dir=getwd())
 
 ```
@@ -87,7 +80,6 @@ infiles <- list(phenos = paste0(indir, "phenos_cleaned_SVs_", currcohort, ".txt"
 outfiles <- list(factor_scores  = file.path(outdir, paste0("factor_scores_", currcohort, ".txt")),
                  rds            = file.path(outdir, paste0("efa_obj_", currcohort, ".rds"))
                  )
-
 ```
 
 
@@ -122,29 +114,23 @@ if (sum(complete_cases) < nrow(nps_matrix)) {
 ```
 
 
-```{r calc-tetrachor}
-### Compute tetrachoric correlation matrix
+```{r calc-corrs}
+### Compute correlation matrices
+het_corr <- polycor::hetcor(nps_matrix)$correlations
 tetra_corr <- psych::tetrachoric(nps_matrix)$rho
+
 ```
 
-```{r check-corrs}
-
+```{r check-corrs, eval = FALSE, echo = TRUE}
 # 1. Check the tetrachoric matrix itself for near-boundary values
-tetra_corr  # look for any |r| > 0.9, especially involving agit or psych
+# look for any |r| > 0.9, especially involving agit or psych
+tetra_corr  
+het_corr
 
 # 2. Check eigenvalues — negative eigenvalues indicate a non-PD matrix
 # that psych::tetrachoric/fa is smoothing under the hood
 eigen(tetra_corr)$values
 
-# 3. Check joint (pairwise) cell counts for agit and psych against every other item
-for (v in setdiff(colnames(nps_matrix), c("agit"))) {
-  print(v)
-  print(table(nps_matrix[, "agit"], nps_matrix[, v], dnn = c("agit", v)))
-}
-for (v in setdiff(colnames(nps_matrix), c("psych"))) {
-  print(v)
-  print(table(nps_matrix[, "psych"], nps_matrix[, v], dnn = c("psych", v)))
-}
 ```
 
 
@@ -154,24 +140,35 @@ for (v in setdiff(colnames(nps_matrix), c("psych"))) {
 screeout <- fa.parallel(tetra_corr, n.obs = nrow(nps_matrix), fm = "minres", fa = "fa")
 
 ```
-The suggested number of latent factors based on the scree plot is `r screeout$nfact`. 
 
-With 7 NPS domains, we can estimate a 3-factor, 2-factor, or 1-factor
-model.
+The suggested number of latent factors based on the scree plot using
+`pysch::tetrachoric()` correlations is `r screeout$nfact`. But regardless, we
+will try 3- 2, and 1-factor models. a 4-factor model is not possible
+using 7 NPS domains. 
 
 
-```{r fit-efa, echo=TRUE}
+```{r fit-psych-efa, echo=TRUE}
 ## Use rotate = "oblimin" if you believe factors may be correlated (likely in psych data).
 ## Another rotation method is 'varimax'
 ## Use cut = 0.2 to suppress very low loadings in the printout.
-efa_results <- list(rep(NA, 4))
+efa_results_tetra <- efa_results_het <- list(rep(NA, 4))
 
 for(curr_n in 1:3) {
-efa_results[[curr_n]] <- psych::fa(tetra_corr,
-                          nfactors = curr_n,
-                          n.obs = nrow(nps_matrix),
-                          rotate = "oblimin",
-                          fm = "minres")
+    efa_results_tetra[[curr_n]] <- psych::fa(
+                                              tetra_corr,
+                                              nfactors = curr_n,
+                                              n.obs = nrow(nps_matrix),
+                                              n.iter = 1000,
+                                              rotate = "oblimin",
+                                              fm = "minres")
+    
+    efa_results_het[[curr_n]] <- psych::fa(
+                                            het_corr,
+                                            nfactors = curr_n,
+                                            n.obs = nrow(nps_matrix),
+                                            n.iter = 1000,
+                                            rotate = "oblimin",
+                                            fm = "minres")
 }
 
 ```
@@ -216,57 +213,166 @@ efa_results[[curr_n]] <- psych::fa(tetra_corr,
  * Factor score adequacy: how well the factor scores would work in
    future modeling
  
-
-#### EFA model fit - 3-factor model
+### Results using tetrachoric correlations from full ML (`psych::tetrachoric()`)
+#### 3-factor model
 ```{r , echo = TRUE}
 curr_n <- 3
-print(efa_results[[curr_n]], digits = 2, cut = 0.2)
+print(efa_results_tetra[[curr_n]], digits = 2, cut = 0.2)
 
 cat("\nComplete factor loadings:\n")
-PrintCompleteLoadings(efa_results[[curr_n]])
+PrintCompleteLoadings(efa_results_tetra[[curr_n]])
 
-fa.diagram(efa_results[[curr_n]], main = paste0(curr_n, "-factor Structure -", currcohort))
+fa.diagram(efa_results_tetra[[curr_n]], main = paste0(curr_n, "-factor Structure -", currcohort))
 
 ```
 
-#### EFA model fit - 2-factor model
+#### 2-factor model
 ```{r , echo = TRUE}
 curr_n <- 2
-print(efa_results[[curr_n]], digits = 2, cut = 0.2)
+print(efa_results_tetra[[curr_n]], digits = 2, cut = 0.2)
 
 cat("\nComplete factor loadings:\n")
-PrintCompleteLoadings(efa_results[[curr_n]])
+PrintCompleteLoadings(efa_results_tetra[[curr_n]])
 
-fa.diagram(efa_results[[curr_n]], main = paste0(curr_n, "-factor Structure -", currcohort))
+fa.diagram(efa_results_tetra[[curr_n]], main = paste0(curr_n, "-factor Structure -", currcohort))
 
 ```
 
-#### EFA model fit - 1-factor model
+#### 1-factor model
 ```{r , echo = TRUE}
 curr_n <- 1
-print(efa_results[[curr_n]], digits = 2, cut = 0.2)
+print(efa_results_tetra[[curr_n]], digits = 2, cut = 0.2)
 
 cat("\nComplete factor loadings:\n")
-PrintCompleteLoadings(efa_results[[curr_n]])
+PrintCompleteLoadings(efa_results_tetra[[curr_n]])
 
-fa.diagram(efa_results[[curr_n]], main = paste0(curr_n, "-factor Structure -", currcohort))
+fa.diagram(efa_results_tetra[[curr_n]], main = paste0(curr_n, "-factor Structure -", currcohort))
 
 ```
 
+### Results using tetrachoric correlations from 2-step estimator (`polycor::hetcor()`) 
+#### 3-factor model
+```{r , echo = TRUE}
+curr_n <- 3
+print(efa_results_het[[curr_n]], digits = 2, cut = 0.2)
+
+cat("\nComplete factor loadings:\n")
+PrintCompleteLoadings(efa_results_het[[curr_n]])
+
+fa.diagram(efa_results_het[[curr_n]], main = paste0(curr_n, "-factor Structure -", currcohort))
+
+```
+
+#### 2-factor model
+```{r , echo = TRUE}
+curr_n <- 2
+print(efa_results_het[[curr_n]], digits = 2, cut = 0.2)
+
+cat("\nComplete factor loadings:\n")
+PrintCompleteLoadings(efa_results_het[[curr_n]])
+
+fa.diagram(efa_results_het[[curr_n]], main = paste0(curr_n, "-factor Structure -", currcohort))
+
+```
+
+#### 1-factor model
+```{r , echo = TRUE}
+curr_n <- 1
+print(efa_results_het[[curr_n]], digits = 2, cut = 0.2)
+
+cat("\nComplete factor loadings:\n")
+PrintCompleteLoadings(efa_results_het[[curr_n]])
+
+fa.diagram(efa_results_het[[curr_n]], main = paste0(curr_n, "-factor Structure -", currcohort))
+
+```
+
+
+
+### Results using `lavaan::efa`
+
+
+```{r lavaan}
+## lavaan::efa() needs a data.frame with ordered factors, not a numeric matrix
+## keep protsample column so we don't have to line them up when we extract scores
+nps_df <- as.data.frame(phenos[, c("protsample", npsvars.bin), with = FALSE])
+nps_df[, npsvars.bin] <- lapply(nps_df[, npsvars.bin], ordered)  # treat each 0/1 column as an ordered factor
+
+## Fit 1-, 2-, and 3-factor exploratory models
+efa_results_lavaan <- list(rep(NA, 3))
+for(x in 1:3) {
+    efa_results_lavaan[[x]] <-lavaan::efa(
+                                          data = nps_df,
+                                          nfactors = x,
+                                          ov.names = npsvars.bin,
+                                          ordered = npsvars.bin,
+                                          estimator = "WLSMV",
+                                          rotation = "oblimin"
+                                      )
+}
+```
+
+#### 3-factor model
+```{r }
+curr_n <- 3
+summary(efa_results_lavaan[[curr_n]], rotation.args = list(rotate = "oblimin"))
+
+# Overall fit indices for each candidate nfactors
+fitMeasures(efa_results_lavaan[[curr_n]], c("chisq.scaled", "df.scaled", "pvalue.scaled",
+                              "cfi.scaled", "tli.scaled", "rmsea.scaled",
+                              "rmsea.ci.lower.scaled", "rmsea.ci.upper.scaled",
+                              "srmr"))
+```
+ 
+#### 2-factor model
+```{r }
+curr_n <- 2
+summary(efa_results_lavaan[[curr_n]], rotation.args = list(rotate = "oblimin"))
+
+# Overall fit indices for each candidate nfactors
+fitMeasures(efa_results_lavaan[[curr_n]], c("chisq.scaled", "df.scaled", "pvalue.scaled",
+                              "cfi.scaled", "tli.scaled", "rmsea.scaled",
+                              "rmsea.ci.lower.scaled", "rmsea.ci.upper.scaled",
+                              "srmr"))
+```
+
+#### 1-factor model
+```{r }
+curr_n <- 1
+summary(efa_results_lavaan[[curr_n]], rotation.args = list(rotate = "oblimin"))
+
+# Overall fit indices for each candidate nfactors
+fitMeasures(efa_results_lavaan[[curr_n]], c("chisq.scaled", "df.scaled", "pvalue.scaled",
+                              "cfi.scaled", "tli.scaled", "rmsea.scaled",
+                              "rmsea.ci.lower.scaled", "rmsea.ci.upper.scaled",
+                              "srmr"))
+```
 
 
 ```{r get-scores, eval = TRUE}
 factors_to_use <- 1
+method_to_use <- "lavaan"
 
-factor_scores_obj <- psych::factor.scores(x = nps_matrix,
-                                          f = efa_results[[factors_to_use]],
-                                          method = "regression")
-factor_scores <- data.table(factor_scores_obj$scores, keep.rownames = "protsample")
+if(method_to_use == "lavaan") {
+    factor_scores <- data.table(protsample = nps_df$protsample,
+                                lavaan::lavPredict(efa_results_lavaan[[factors_to_use]],
+                                        method = "EBM",
+                                        newdata = nps_df,
+                                        assemble = TRUE,
+                                        ))
+}
+
+if(method_to_use == "psych_tetra") {
+    factor_scores_obj <- psych::factor.scores(x = nps_matrix,
+                                              f = efa_results_tetra[[factors_to_use]],
+                                              method = "regression")
+    factor_scores <- data.table(factor_scores_obj$scores, keep.rownames = "protsample")
+}
 
 ```
 
-Here is the distribution of the each factor score. 
 
+Here is the distribution of each factor score. 
 
 ```{r visualize-score-distributions, fig.height = 8, eval = TRUE}
 factorcols <- setdiff(colnames(factor_scores), "protsample")
@@ -286,6 +392,6 @@ invisible(sapply(factorcols, function(afactor) {
 write.table(factor_scores, file = outfiles[["factor_scores"]],
             row.names = FALSE, quote = FALSE, sep = "\t")
 
-saveRDS(efa_results[[factors_to_use]], file = outfiles[["rds"]])
+saveRDS(efa_results_tetra[[factors_to_use]], file = outfiles[["rds"]])
 
 ```

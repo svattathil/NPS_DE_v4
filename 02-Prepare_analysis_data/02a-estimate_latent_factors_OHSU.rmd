@@ -147,7 +147,7 @@ will try 3- 2, and 1-factor models. a 4-factor model is not possible
 using 7 NPS domains. 
 
 
-```{r fit-efa, echo=TRUE}
+```{r fit-psych-efa, echo=TRUE}
 ## Use rotate = "oblimin" if you believe factors may be correlated (likely in psych data).
 ## Another rotation method is 'varimax'
 ## Use cut = 0.2 to suppress very low loadings in the printout.
@@ -158,6 +158,7 @@ for(curr_n in 1:3) {
                                               tetra_corr,
                                               nfactors = curr_n,
                                               n.obs = nrow(nps_matrix),
+                                              n.iter = 1000,
                                               rotate = "oblimin",
                                               fm = "minres")
     
@@ -165,6 +166,7 @@ for(curr_n in 1:3) {
                                             het_corr,
                                             nfactors = curr_n,
                                             n.obs = nrow(nps_matrix),
+                                            n.iter = 1000,
                                             rotate = "oblimin",
                                             fm = "minres")
 }
@@ -289,11 +291,11 @@ fa.diagram(efa_results_het[[curr_n]], main = paste0(curr_n, "-factor Structure -
 
 ### Results using `lavaan::efa`
 
-
 ```{r lavaan}
 ## lavaan::efa() needs a data.frame with ordered factors, not a numeric matrix
-nps_df <- as.data.frame(nps_matrix)
-nps_df[] <- lapply(nps_df, ordered)  # treat each 0/1 column as an ordered factor
+## keep protsample column so we don't have to line them up when we extract scores
+nps_df <- as.data.frame(phenos[, c("protsample", npsvars.bin), with = FALSE])
+nps_df[, npsvars.bin] <- lapply(nps_df[, npsvars.bin], ordered)  # treat each 0/1 column as an ordered factor
 
 ## Fit 1-, 2-, and 3-factor exploratory models
 efa_results_lavaan <- list(rep(NA, 3))
@@ -301,7 +303,8 @@ for(x in 1:3) {
     efa_results_lavaan[[x]] <-lavaan::efa(
                                           data = nps_df,
                                           nfactors = x,
-                                          ordered = names(nps_df),
+                                          ov.names = npsvars.bin,
+                                          ordered = npsvars.bin,
                                           estimator = "WLSMV",
                                           rotation = "oblimin"
                                       )
@@ -336,13 +339,26 @@ fitMeasures(efa_results_lavaan[[curr_n]], c("chisq.scaled", "df.scaled", "pvalue
 
 ```{r get-scores, eval = TRUE}
 factors_to_use <- 1
+method_to_use <- "lavaan"
 
-factor_scores_obj <- psych::factor.scores(x = nps_matrix,
-                                          f = efa_results_tetra[[factors_to_use]],
-                                          method = "regression")
-factor_scores <- data.table(factor_scores_obj$scores, keep.rownames = "protsample")
+if(method_to_use == "lavaan") {
+    factor_scores <- data.table(protsample = nps_df$protsample,
+                                lavaan::lavPredict(efa_results_lavaan[[factors_to_use]],
+                                        method = "EBM",
+                                        newdata = nps_df,
+                                        assemble = TRUE,
+                                        ))
+}
+
+if(method_to_use == "psych_tetra") {
+    factor_scores_obj <- psych::factor.scores(x = nps_matrix,
+                                              f = efa_results_tetra[[factors_to_use]],
+                                              method = "regression")
+    factor_scores <- data.table(factor_scores_obj$scores, keep.rownames = "protsample")
+}
 
 ```
+
 
 Here is the distribution of each factor score. 
 
