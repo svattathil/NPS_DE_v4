@@ -115,13 +115,13 @@ mincount <- ifelse(args$run %in% c("males", "females"), 25, 50)
 
 ## covars for this run
 ## SVs will be added on the fly
-if(args$run %in% c("males", "females")) {
-    covars <- c("Batch", "pmi", "age_death")
+if(args$run %in% c("basic", "severity")) {
+    covars <- c("Batch", "pmi", "age_death", "msex")
     fac_covars <- c("Batch")
 }
 
-if(args$run %in% c("basic", "severity")) {
-    covars <- c("Batch", "pmi", "age_death", "msex")
+if(args$run %in% c("males", "females")) {
+    covars <- c("Batch", "pmi", "age_death")
     fac_covars <- c("Batch")
 }
 
