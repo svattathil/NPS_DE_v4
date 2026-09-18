@@ -150,32 +150,39 @@ summstats <- data.table(data.frame(t(sapply(1:nrow(transformed), function(i) {
     setDT(longtest)
     longtest[, protsample := factor(protsample)]
     longtest[, nps_id := factor(nps_id)]
+    longtest[, wave := as.integer(nps_id)]
+    setorder(longtest, protsample, wave)
 
     ## 2. Run GEE model
-    ## This formulation treats the nine NPS as repeated measures within each subject
+    ## This formulation treats the NPS domains as repeated measures within each subject
     ## With interaction term, it estimates separate regression coefficients for each NPS
+    ## Including nps_id term allows a different intercept per nps
     ## The working correlation captures the fact that the outcomes are correlated
+    ## using jacknife for std.err is better than the default, which is
+    ## downward-biased with small sample size and will cause inflation in the Wald p-value
     gee_fit_int <- geeglm(update.formula(as.formula(modelform("outcome")),
-                                         . ~ . -protein + protein:nps_id),
-                          id     = protsample,  # clustered by protsample
-                          data   = longtest,
-                          family = binomial(link = "logit"),
-                          corstr = "exchangeable")
+                                         . ~ . - protein + nps_id + protein:nps_id),
+                          id      = protsample,  # clustered by protsample
+                          waves   = wave,        # used if "unstructured" corr structure
+                          data    = longtest,
+                          family  = binomial(link = "logit"),
+                          corstr  = "exchangeable",
+                          std.err = "jack")
 
     ## 3. Extract coefficients for the interaction terms (protein:nps_id)
     coef_vec <- coef(gee_fit_int)
-    prot_terms <- grep("^protein:", names(coef_vec), value = TRUE)
-    beta_prot  <- coef_vec[prot_terms]   # length = 9
-    names(beta_prot) <- sub("^protein:nps_id", "", prot_terms)   # rename
+    prot_terms <- grep("protein", names(coef_vec), value = TRUE)
+    beta_prot  <- coef_vec[prot_terms]   # length = n.nps
+    names(beta_prot) <- sub(":protein", "", sub("nps_id", "", prot_terms))   # rename
 
     ## 4. Extract robust (sandwich) covariance matrix for *all* coefficients
     V_full <- vcov(gee_fit_int)   # square matrix (dim = #coeffs)
 
     ## Subset to the protein‑by‑NPS block
-    ## V_prot is the sampling-error covariance matrix for the nine protein coefficients
+    ## V_prot is the sampling-error covariance matrix for the per-domain protein coefficients
     ## It accounts for the correlation among the outcomes through the GEE working correlation,
     ## and for any over-dispersion via the robust sandwich estimator
-    V_prot <- V_full[prot_terms, prot_terms]   # 9 × 9
+    V_prot <- V_full[prot_terms, prot_terms]   # n.nps x n.nps
 
     ## 5. Do joint hypothesis test with Wald test
     ## Wald test (Chi‑square approximation)
