@@ -28,13 +28,14 @@ scriptfile=$scriptdir/01a-run_wgcna.rmd
 
 
 
+residset=ignoreSVs
 
 ### -- For OHSU ###
 cohort=OHSU
-softpower=4
+softpower=9
 
 
-outputfile=wgcna_report_${cohort}_softpower$softpower.html
+outputfile=wgcna_report_${cohort}_${residset}_softpower$softpower.html
 cmd=(R --slave -e )
 cmd+=("'rmarkdown::render(")
 cmd+=('"'$scriptfile'",')
@@ -44,15 +45,16 @@ cmd+=('knit_root_dir=getwd(),')
 cmd+=("intermediates_dir=getwd())'")
 cmd+=('--args --cohort ' $cohort)
 cmd+=('--softpower '$softpower)
+cmd+=('--residset 'ignoreSVs)
 
 ## execute command
 eval ${cmd[*]}
 
 ### -- For rush ### 
 cohort=rush
-softpower=5
+softpower=9
 
-outputfile=wgcna_report_${cohort}_softpower$softpower.html
+outputfile=wgcna_report_${cohort}_${residset}_softpower$softpower.html
 cmd=(R --slave -e )
 cmd+=("'rmarkdown::render(")
 cmd+=('"'$scriptfile'",')
@@ -62,6 +64,7 @@ cmd+=('knit_root_dir=getwd(),')
 cmd+=("intermediates_dir=getwd())'")
 cmd+=('--args --cohort ' $cohort)
 cmd+=('--softpower '$softpower)
+cmd+=('--residset 'ignoreSVs)
 
 
 ## execute command
@@ -71,9 +74,9 @@ eval ${cmd[*]}
 
 ### -- For emory ###
 cohort=emory
-softpower=6
+softpower=9
 
-outputfile=wgcna_report_${cohort}_softpower$softpower.html
+outputfile=wgcna_report_${cohort}_${residset}_softpower$softpower.html
 cmd=(R --slave -e )
 cmd+=("'rmarkdown::render(")
 cmd+=('"'$scriptfile'",')
@@ -83,6 +86,7 @@ cmd+=('knit_root_dir=getwd(),')
 cmd+=("intermediates_dir=getwd())'")
 cmd+=('--args --cohort ' $cohort)
 cmd+=('--softpower '$softpower)
+cmd+=('--residset 'ignoreSVs)
 
 
 ## execute command

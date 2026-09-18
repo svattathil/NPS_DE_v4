@@ -86,6 +86,8 @@ parser$add_argument("--cutheight", type="double",
                     help="value for mergeCutHeight", default = 0.30)
 parser$add_argument("--network_set", type="character",
                     help="cohort-specific or consensus", default = "cohort-specific")
+parser$add_argument("--residset", type="character",
+                    help="regressSVs or ignoreSVs", default = "regress_SVs")
 
 ## Read from parser
 args <- parser$parse_args()
@@ -135,10 +137,11 @@ knitr::opts_chunk$set(fig.width=7, fig.height=4)
 ### Files that exist
 datdir <- "2_Pipeline/02-Prepare_analysis_data/"
 infiles <- list(
-    resid        = paste0(datdir, "resid_regress_covars_", args$cohort, ".txt"),
     phenos       = paste0(datdir, "phenos_cleaned_SVs_", args$cohort, ".txt"),
+    resid        = Residfile(args$residset, args$cohort),
     shared_genes = "2_Pipeline/04-Build_networks/shared_genes_for_consensus_module.txt"
 )
+
 ```
 	
 	
@@ -151,7 +154,7 @@ outdir <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/",
 MyMkdir(outdir)
 MyMkdir(paste0(outdir, "/Module_genes/"))
 
-runid <- paste0(args$cohort, "_softpower", args$softpower,
+runid <- paste0(args$cohort, "_", args$residset, "_softpower", args$softpower,
                 "_cutheight", sprintf("%.2f", args$cutheight))
 if(args$network_set == "consensus") {
     runid <- paste0("for_consensus_", runid)
