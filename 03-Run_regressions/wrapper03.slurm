@@ -80,10 +80,15 @@ run_limma_script01 e4_adj
 Rscript $scriptdir/02a-run-metafor.r --run e4_adj
 
 
-for acohort in rush emory #OHSU #
+### Multivariate
+## Per-cohort
+for acohort in OHSU rush emory
 do
-    Rscript $scriptdir/03a-run_multivariate.r --cohort $acohort
+    Rscript $scriptdir/03a-run_multivariate.r --cohort $acohort --residset ignoreSVs
 done
+
+## Meta-analysis
+Rscript $scriptdir/04a-run_mvmeta.r
 
 
 

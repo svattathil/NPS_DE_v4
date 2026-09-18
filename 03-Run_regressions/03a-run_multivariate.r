@@ -38,6 +38,8 @@ GetStats <- function(regression.out, modelfamily = modelfamily, var="protein") {
 ## Create parser
 parser <- ArgumentParser()
 parser$add_argument("--cohort", type="character", default = "OHSU")
+parser$add_argument("--residset", type="character",
+                    help="regressSVs or ignoreSVs", default = "ignoreSVs")
 
 ## Read from parser
 args <- parser$parse_args()
@@ -46,7 +48,7 @@ args <- parser$parse_args()
 ### Files that exist
 indir <- "2_Pipeline/02-Prepare_analysis_data/"
 infiles <- list(phenos = paste0(indir, "phenos_cleaned_SVs_", args$cohort, ".txt"),
-                resid  = paste0(indir, "resid_regress_covars_", args$cohort, ".txt")
+                resid        = Residfile(args$residset, args$cohort)
                 )
 
 ### Files to be created
@@ -239,7 +241,7 @@ write("\nModel and significance summary:", file = outfiles$log)
 fwrite(logtab, file = outfiles$log, sep = "\t", quote = FALSE, col.names = TRUE, append = TRUE)
 
 
-### Write objects to do  meta-analysis
+### Write objects to do meta-analysis
 saveRDS(beta_vectors, file = outfiles$formeta_betas)
 saveRDS(covariance_mats, file = outfiles$formeta_covs)
 

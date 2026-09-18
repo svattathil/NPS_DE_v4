@@ -9,26 +9,17 @@ rm(list = ls())
 ## Run meta-analysis on the multivariate regression results
 
 
-###### FUNCTIONS ######
-source("~/comsv/Svattathil_Library/svattathil_functions.r")
-
-
-###### SETUP ######
-### Command line arguments
-## Create parser
-parser <- ArgumentParser()
-
-
-## Read from parser
-args <- parser$parse_args()
-
-
 ### Constants
 options(stringsAsFactors = FALSE)
 source("1_Code/project_constants.r")
 vars_formulti <- npsvars.bin
 
 
+###### FUNCTIONS ######
+source("~/comsv/Svattathil_Library/svattathil_functions.r")
+
+
+###### SETUP ######
 ### Files that exist
 indir <- "2_Pipeline/03-Run_regressions/Prot_multivar/Mvmeta/In/"
 File.betas <- function(acohort) {
@@ -62,9 +53,10 @@ meta_res <- sapply(1:length(proteins_to_test), function(i) {
     aprot <- proteins_to_test[i]
 
     ## Extract beta vector and covariance matrix for current protein for each cohort
+    ## covarscols define column/row names corresponding to NPS of interest
     ## beta_mat is a matrix with one row per cohort and one column per NPS
     ## cov_list is a list with one element per cohort, each element is a n.nps x n.nps matrix
-    covarcols <- paste0("protein:nps_id", vars_formulti)  ## define column/row names corresponding to NPS of interest
+    covarcols <- paste0("protein:nps_id", vars_formulti)
     beta_mat <- t(sapply(cohorts, function(acohort) {
         betas[[acohort]][[aprot]][vars_formulti] }))  ## 3 x length(vars_formulti)
     cov_list  <- lapply(cohorts, function(acohort) {
