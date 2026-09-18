@@ -87,7 +87,7 @@ parser$add_argument("--cutheight", type="double",
 parser$add_argument("--network_set", type="character",
                     help="cohort-specific or consensus", default = "cohort-specific")
 parser$add_argument("--residset", type="character",
-                    help="regressSVs or ignoreSVs", default = "regress_SVs")
+                    help="regressSVs or ignoreSVs", default = "ignoreSVs")
 
 ## Read from parser
 args <- parser$parse_args()
