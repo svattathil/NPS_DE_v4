@@ -7,9 +7,10 @@ rm(list = ls())
 source("~/comsv/Svattathil_Library/svattathil_functions.r")
 
 
-
 ###### GOAL ######
-## Regress out covariates and SVs while protecting NPS
+## Regress out covariates
+## Optionally, also regress out SVs
+## Optionally, protect the NPS variables
 
 
 ##### CONSTANTS #####
@@ -17,7 +18,9 @@ options(stringsAsFactors = FALSE)
 source("1_Code/project_constants.r")
 
 nuisance_vars <- c("Batch", "pmi", "age_death", "msex")
-vars_to_protect <- c(npsvars.bin)
+covar_labels <- unlist(tstrsplit(nuisance_vars, split = "_", keep = 1))
+covarstring <- paste0(Capwords(covar_labels), collapse = "")
+npsvars <- c(npsvars.bin)
 
 
 ###### FUNCTIONS ######
@@ -29,25 +32,28 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 ## Create parser
 parser <- ArgumentParser()
 parser$add_argument("--cohort", type="character", default = "OHSU", help="OHSU, rush, or emory")
-parser$add_argument("--option", type = "character", default = "regress_SVs", help = "'regress_SVs' or 'ignore_SVs'")
+parser$add_argument("--option", type = "character", default = "regressSVs",
+                    help = "'regressSVs' or 'ignoreSVs' or 'noProtect'")
 
 ## Read from parser
 args <- parser$parse_args()
 
 
 ### Set options
-
-if(args$option == "regress_SVs") {
-    ## These are just for filenames
-    covar_labels <- unlist(tstrsplit(nuisance_vars, split = "_", keep = 1))
-    covarstring <- paste0(Capwords(covar_labels), collapse = "")
-    covarstring <- paste0(covarstring, "SVs")
+## np is the  number of variables to protect in cleaning (including intercept)
+if(args$option == "regressSVs") {
+    np <- length(npsvars) + 1
+    fileid <- paste0(covarstring, "SVs")
 }
 
-if(args$option == "ignore_SVs") {
-    ## These are just for filenames
-    covar_labels <- unlist(tstrsplit(nuisance_vars, split = "_", keep = 1))
-    covarstring <- paste0(Capwords(covar_labels), collapse = "")
+if(args$option == "ignoreSVs") {
+    np <- length(npsvars) + 1
+    fileid <- covarstring
+}
+
+if(args$option == "noProtect") {
+    np <-  1
+    fileid <- paste0(covarstring, "_noProtect")
 }
 
 
@@ -61,10 +67,14 @@ infiles <- list(prot = paste0(indir, "prot.pcafiltered.log2norm.txt"),
 ### Files to be created
 outdir <- "2_Pipeline/02-Prepare_analysis_data/"
 MyMkdir(outdir)
-outfiles <- list(
-    out.phenos.svs = paste0(outdir, "/phenos_cleaned_SVs_", args$cohort, ".txt"),
-    out.resid = paste0(outdir, "/resid_regress_", covarstring, "_", args$cohort, ".txt"),
-    out.log = paste0(outdir, "/", "data_cleaning_", covarstring, "_", args$cohort, ".log"))
+
+outfiles <- list()
+outfiles$resid <- paste0(outdir, "/resid_regress_", fileid, "_", args$cohort, ".txt")
+outfiles$log   <- paste0(outdir, "/resid_regress_", fileid, "_", args$cohort, ".log")
+
+## Currently this is written to the same file no matter the option
+## It should be fine as long as the nuisance and nps variables are constant
+outfiles$phenos.svs <- paste0(outdir, "/phenos_cleaned_SVs_", args$cohort, ".txt")
 
 
 ###### MAIN ######
@@ -94,7 +104,7 @@ prot.countfiltered <- prot.sampfiltered[obscounts >= 50, ]
 ### Estimate SVs
 ## Subset phenos to samples with complete data for phenotype(s) of interest
 nomissing <- phenos.orig[, apply(.SD, 1, function(x) { !any(is.na(x)) }),
-                         .SDcol = c(nuisance_vars, vars_to_protect)]
+                         .SDcol = c(nuisance_vars, npsvars)]
 phenos <- phenos.orig[nomissing, ]
 
 ## filter phenos to samples that are also in the prot data
@@ -119,7 +129,7 @@ edata.complete <- edata.countfiltered[complete.cases(edata.countfiltered), ]
 
 ## Specify null and full models
 nullmodel <- as.formula(paste("~ ", paste0(c(nuisance_vars), collapse = "+")))
-fullmodel <- as.formula(paste("~ ", paste0(c(vars_to_protect, nuisance_vars), collapse = "+")))
+fullmodel <- as.formula(paste("~ ", paste0(c(npsvars, nuisance_vars), collapse = "+")))
 
 
 mod0 <- model.matrix(nullmodel, data = phenos)
@@ -153,24 +163,20 @@ if(!(all(phenos_withsvs$protsample == colnames(edata.countfiltered)))) {
 
 
 ### Do cleaning
-if(args$option == "regress_SVs") {
-    vars_to_regress <- c(nuisance_vars, sv_names)
-}
-
-if(args$option == "ignore_SVs") {
-    vars_to_regress <- nuisance_vars
-}
+vars_to_regress <- switch(args$option,
+   regressSVs = c(nuisance_vars, sv_names),
+   ignoreSVs  = nuisance_vars,
+   noProtect  = nuisance_vars
+   )
 
 modelform_forcleaning <- as.formula(paste("~ ",
-                                          paste0(c(vars_to_protect,
+                                          paste0(c(npsvars,
                                                    vars_to_regress),
                                                  collapse = "+")))
 modmat_forcleaning <- model.matrix(modelform_forcleaning, data = phenos_withsvs)
 
-
 ## Make matching expression data including all proteins that passed count filtering
 ## (don't need to restrict to complete data)
-np <- length(vars_to_protect) + 1 ## number of variables to protect (including intercept)
 edata.cleaned <- cleaningY(edata.countfiltered,
                            modmat_forcleaning,
                            P = np)
@@ -180,16 +186,16 @@ cleaned_forprint <- as.data.table(edata.cleaned, keep.rownames = "protein")
 
 ###### FINISH ######
 ### Write phenos with SVs
-fwrite(phenos_withsvs, file = outfiles$out.phenos.svs, row.names = FALSE, quote = FALSE, sep = "\t")
+fwrite(phenos_withsvs, file = outfiles$phenos.svs, row.names = FALSE, quote = FALSE, sep = "\t")
 
 
 ### Write residuals
-write.table(cleaned_forprint, file = outfiles$out.resid,
+write.table(cleaned_forprint, file = outfiles$resid,
             row.names = FALSE, quote = FALSE, sep = "\t")
 
 
 ### Write log file
-Writelog <- function(s, doappend=TRUE) { write(s, outfiles$out.log, append=doappend, ncolumns=1)}
+Writelog <- function(s, doappend=TRUE) { write(s, outfiles$log, append=doappend, ncolumns=1)}
 Writelog(paste(c(args$cohort, paste0("number of SVs: ", n.sv)), collapse = "\t"), doappend=FALSE)
 Writelog(paste0("Subjects dropped due to incomplete phenotype data: ", sum(!nomissing)))
 Writelog(paste0("Subjects with SV estimates: ", sum(nomissing)))

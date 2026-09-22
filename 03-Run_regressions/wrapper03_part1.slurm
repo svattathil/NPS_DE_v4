@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH --job-name=wrapper03
+#SBATCH --job-name=wrapper03_1
 #SBATCH --nodes=1
 #SBATCH --mem=4G 
 #SBATCH --cpus-per-task=1
-#SBATCH --time=0-1:00:00 
+#SBATCH --time=0-2:00:00 
 #SBATCH --output=Slurmout/%x-%A_%a.o
 #SBATCH --error=Slurmout/%x-%A_%a.e
 #SBATCH --chdir=.
@@ -19,7 +19,6 @@ source ~/.bashrc
 conda activate env1
 
 scriptdir=1_Code/03-Run_regressions/
-
 
 ## Functions
 run_limma_script01() {
@@ -78,17 +77,3 @@ Rscript $scriptdir/aggregate_stats_to_excel.r --run females
 ## Sensitivity - adjust e4 expression
 run_limma_script01 e4_adj
 Rscript $scriptdir/02a-run-metafor.r --run e4_adj
-
-
-### Multivariate
-## Per-cohort
-for acohort in OHSU rush emory
-do
-    Rscript $scriptdir/03a-run_multivariate.r --cohort $acohort --residset ignoreSVs
-done
-
-## Meta-analysis
-Rscript $scriptdir/04a-run_mvmeta.r
-
-
-
