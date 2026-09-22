@@ -16,6 +16,15 @@ source("1_Code/project_constants.r")
 source("~/comsv/Svattathil_Library/svattathil_functions.r")
 source("~/comsv/Svattathil_Library/manhattan_and_qq_plot_functions.r")
 
+DomainCounts <- function(longtest) {
+    ## Track per-domain case counts for any protein that errors, to help
+    ## distinguish "aliased/constant domain" from other failure modes
+    ## without having to re-run anything.
+
+    tab <- longtest[, .(n = .N, cases = sum(outcome, na.rm = TRUE)), by = nps_id]
+    paste(sprintf("%s:n=%d,cases=%d", tab$nps_id, tab$n, tab$cases), collapse = "; ")
+}
+
 
 GetStats <- function(regression.out, modelfamily = modelfamily, var="protein", nobs) {
     if(length(regression.out) == 1) {
@@ -82,6 +91,7 @@ modelfamily <- "binomial"
 predictorvar <- "protein"
 modelform <- function(currnps) { paste0(currnps, " ~ protein") }
 
+
 #### Prepare data ####
 ### Filter samples
 ## Restrict phenos to samples in resid data (because they did different filtering)
@@ -112,105 +122,140 @@ rownames(transformed) <- rownames(for_transformation)
 colnames(transformed) <- colnames(for_transformation)
 
 
-### Iinitialize objects to hold coefficients and covariance matrix,
+### Iinitialize objects to hold results, and also coefficients and covariance matrices,
 ### which are necessary to run meta-analysis across cohorts
 beta_vectors <- covariance_mats <- as.list(rep(NA, nrow(transformed)))   # initialize with NA
 names(beta_vectors) <- names(covariance_mats) <- rownames(transformed)   # add protein names
-
+results_list <- vector("list", nrow(transformed))
 
 ### Run regression for each protein in turn
 print("Starting regressions for each protein")
 ## Set seed since multivariate seems to have some random function
 set.seed(24983423)
 
+for (i in seq_len(nrow(transformed))) {
+    if (i %% 1000 == 0) { print(paste0(pN(i), " of ", pN(nrow(transformed)))) }
 
-summstats <- data.table(data.frame(t(sapply(1:nrow(transformed), function(i) {
-    if(i %% 1000 == 0) { print(paste0(pN(i), " of ", pN(nrow(transformed)))) }
+    protein_name <- rownames(transformed)[i]
+    domain_counts <- NA_character_   # populated inside tryCatch once longtest exists
 
-    ## 1. Set up data
-    ## Initiate test data for this protein (z-scaled residuals and sample ID)
-    test <- data.frame(
-        protein = unlist(transformed[i, ]),
-        protsample = colnames(transformed))
+    fit_result <- tryCatch({
+        ## 1. Set up data
+        ## Initiate test data for this protein (z-scaled residuals and sample ID)
+        test <- data.frame(
+            protein = unlist(transformed[i, ]),
+            protsample = colnames(transformed))
 
-    ## Add phenos to test data
-    test <- merge(test, phenos, by="protsample")
+        ## Add phenos to test data
+        test <- merge(test, phenos, by="protsample")
 
+        ## Restrict to complete data
+        test <- test[complete.cases(test), ]
+        setDT(test)
 
-    ## Restrict to complete data
-    test <- test[complete.cases(test), ]
-    setDT(test)
+        ## Convert to long format
+        ## This is a cheaty way to get predictor variables + sample id column
+        idvars <- all.vars(as.formula(modelform("protsample")))
+        longtest <- melt(test,
+                         id.vars = idvars,
+                         measure.vars = npsvars.bin,
+                         variable.name = "nps_id",
+                         value.name = "outcome")
+        setDT(longtest)
+        longtest[, protsample := factor(protsample)]
+        longtest[, nps_id := factor(nps_id)]
+        longtest[, wave := as.integer(nps_id)]
+        setorder(longtest, protsample, wave)
 
-    ## Convert to long format
-    ## This is a cheaty way to get predictor variables + sample id column
-    idvars <- all.vars(as.formula(modelform("protsample")))
-    longtest <- melt(test,
-                     id.vars = idvars,
-                     measure.vars = npsvars.bin,
-                     variable.name = "nps_id",
-                     value.name = "outcome")
-    setDT(longtest)
-    longtest[, protsample := factor(protsample)]
-    longtest[, nps_id := factor(nps_id)]
-    longtest[, wave := as.integer(nps_id)]
-    setorder(longtest, protsample, wave)
+        domain_counts <<- DomainCounts(longtest)
 
-    ## 2. Run GEE model
-    ## This formulation treats the NPS domains as repeated measures within each subject
-    ## With interaction term, it estimates separate regression coefficients for each NPS
-    ## Including nps_id term allows a different intercept per nps
-    ## The working correlation captures the fact that the outcomes are correlated
-    ## using jacknife for std.err is better than the default, which is
-    ## downward-biased with small sample size and will cause inflation in the Wald p-value
-    gee_fit_int <- geeglm(update.formula(as.formula(modelform("outcome")),
-                                         . ~ . -protein + nps_id + protein:nps_id),
-                          id      = protsample,  # clustered by protsample
-                          waves   = wave,        # used if "unstructured" corr structure
-                          data    = longtest,
-                          family  = binomial(link = "logit"),
-                          corstr  = "unstructured",
-                          std.err = "jack")
+        ## 2. Run GEE model
+        ## This formulation treats the NPS domains as repeated measures within each subject
+        ## With interaction term, it estimates separate regression coefficients for each NPS
+        ## Including nps_id term allows a different intercept per nps
+        ## The working correlation captures the fact that the outcomes are correlated
+        ## using jacknife for std.err is better than the default, which is
+        ## downward-biased with small sample size and will cause inflation in the Wald p-value
+        gee_fit_int <- geeglm(update.formula(as.formula(modelform("outcome")),
+                                             . ~ . -protein + nps_id + protein:nps_id),
+                              id      = protsample,  # clustered by protsample
+                              waves   = wave,        # used if "unstructured" corr structure
+                              data    = longtest,
+                              family  = binomial(link = "logit"),
+                              corstr  = "unstructured",
+                              std.err = "jack")
 
-    ## 3. Extract coefficients for the interaction terms (protein:nps_id)
-    coef_vec <- coef(gee_fit_int)
-    prot_terms <- grep("protein", names(coef_vec), value = TRUE)
-    beta_prot  <- coef_vec[prot_terms]   # length = n.nps
-    names(beta_prot) <- sub(":protein", "", sub("nps_id", "", prot_terms))   # rename
+        ## Detect aliasing explicitly rather than letting it surface later as an opaque
+        ## singular-matrix error out of linearHypothesis
+        if (anyNA(coef(gee_fit_int))) {
+            stop("Aliased coefficient(s) in GEE fit (likely a constant/near-constant ",
+                 "NPS domain for this protein): ",
+                 paste(names(coef(gee_fit_int))[is.na(coef(gee_fit_int))], collapse = ", "))
+        }
 
-    ## 4. Extract robust (sandwich) covariance matrix for *all* coefficients
-    V_full <- vcov(gee_fit_int)   # square matrix (dim = #coeffs)
+        ## 3. Extract coefficients for the interaction terms (protein:nps_id)
+        coef_vec <- coef(gee_fit_int)
+        prot_terms <- grep("protein", names(coef_vec), value = TRUE)
+        beta_prot  <- coef_vec[prot_terms]   # length = n.nps
+        names(beta_prot) <- sub(":protein", "", sub("nps_id", "", prot_terms))   # rename
 
-    ## Subset to the protein‑by‑NPS block
-    ## V_prot is the sampling-error covariance matrix for the per-domain protein coefficients
-    ## It accounts for the correlation among the outcomes through the GEE working correlation,
-    ## and for any over-dispersion via the robust sandwich estimator
-    V_prot <- V_full[prot_terms, prot_terms]   # n.nps x n.nps
+        ## 4. Extract robust (sandwich) covariance matrix for *all* coefficients
+        V_full <- vcov(gee_fit_int)   # square matrix (dim = #coeffs)
 
-    ## 5. Do joint hypothesis test with Wald test
-    ## Wald test (Chi‑square approximation)
-    ## Save as lm_i for compatibility
-    lm_i <- car::linearHypothesis(gee_fit_int,
-                                  hypothesis.matrix = prot_terms)
+        ## Subset to the protein‑by‑NPS block
+        ## V_prot is the sampling-error covariance matrix for the per-domain protein coefficients
+        ## It accounts for the correlation among the outcomes through the GEE working correlation,
+        ## and for any over-dispersion via the robust sandwich estimator
+        V_prot <- V_full[prot_terms, prot_terms]   # n.nps x n.nps
 
-    beta_vectors[[i]] <<- beta_prot
-    covariance_mats[[i]] <<- V_prot
+        ## 5. Do joint hypothesis test with Wald test
+        ## Wald test (Chi‑square approximation)
+        ## Save as lm_i for compatibility
+        lm_i <- car::linearHypothesis(gee_fit_int,
+                                      hypothesis.matrix = prot_terms)
 
-    ## Extract and return summary statistics
-    n <- length(unique(gee_fit_int$id))
-    stats_i <- GetStats(lm_i, modelfamily = modelfamily, var = predictorvar, n)
-    return(stats_i)
+        ## Extract summary statistics
+        n <- length(unique(gee_fit_int$id))
+        stats_i <- GetStats(lm_i, modelfamily = modelfamily, var = predictorvar, n)
 
-}))))
+        return(list(beta = beta_prot, V = V_prot, stats = stats_i, error = NA_character_))
 
+    }, error = function(e) {
+        list(beta = NA, V = NA,
+             stats = c(Chisq = NA_real_, P = NA_real_, nobs = NA_real_),
+             error = conditionMessage(e))
+    })
 
-## Add protein column
-summstats[, protein := rownames(transformed)]
+    beta_vectors[[i]]      <- fit_result$beta
+    covariance_mats[[i]]   <- fit_result$V
+
+    results_list[[i]] <- list(
+        protein       = protein_name,
+        Chisq         = unname(fit_result$stats["Chisq"]),
+        P             = unname(fit_result$stats["P"]),
+        nobs          = unname(fit_result$stats["nobs"]),
+        error         = fit_result$error,
+        domain_counts = domain_counts
+    )
+}
+
+n.errors <- sum(!sapply(results_list, function(x) is.na(x$error)))
+if (n.errors > 0) {
+    print(paste0(pN(n.errors), " of ", pN(nrow(transformed)),
+                 " proteins failed and were skipped (see 'error' column in output)."))
+}
+
+summstats <- rbindlist(results_list)
 setcolorder(summstats, "protein")
 
 
 ### Add columns for qvalue
-summstats[, qvalue := qvalue(P)$qvalues]
-summstats[, lfdr := qvalue(P)$lfdr]
+## qvalue() errors on NA input, so compute only on proteins with a valid P;
+## failed proteins (see 'error' column) keep NA for qvalue/lfdr/etc.
+summstats[!is.na(P), c("qvalue", "lfdr") := {
+    qobj <- qvalue(P)
+    list(qobj$qvalues, qobj$lfdr)
+}]
 summstats[, P.BH := p.adjust(P, method="BH")]
 summstats[, P.bonf := p.adjust(P, method="bonferroni")]
 summstats[, sig.qvalue05 := ifelse(qvalue < 0.05, TRUE, FALSE)]
