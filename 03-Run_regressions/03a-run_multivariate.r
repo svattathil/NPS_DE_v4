@@ -3,6 +3,7 @@ library(argparse)
 library(qvalue)
 library(car)
 library(geepack)
+library(clubSandwich)
 
 rm(list=ls())
 
@@ -20,7 +21,6 @@ DomainCounts <- function(longtest) {
     ## Track per-domain case counts for any protein that errors, to help
     ## distinguish "aliased/constant domain" from other failure modes
     ## without having to re-run anything.
-
     tab <- longtest[, .(n = .N, cases = sum(outcome, na.rm = TRUE)), by = nps_id]
     paste(sprintf("%s:n=%d,cases=%d", tab$nps_id, tab$n, tab$cases), collapse = "; ")
 }
@@ -140,7 +140,7 @@ for (i in seq_len(nrow(transformed))) {
     domain_counts <- NA_character_   # populated inside tryCatch once longtest exists
 
     fit_result <- tryCatch({
-        ## 1. Set up data
+        ### 1. Set up data
         ## Initiate test data for this protein (z-scaled residuals and sample ID)
         test <- data.frame(
             protein = unlist(transformed[i, ]),
@@ -169,7 +169,7 @@ for (i in seq_len(nrow(transformed))) {
 
         domain_counts <<- DomainCounts(longtest)
 
-        ## 2. Run GEE model
+        ### 2. Run GEE model
         ## This formulation treats the NPS domains as repeated measures within each subject
         ## With interaction term, it estimates separate regression coefficients for each NPS
         ## Including nps_id term allows a different intercept per nps
@@ -183,7 +183,7 @@ for (i in seq_len(nrow(transformed))) {
                               data    = longtest,
                               family  = binomial(link = "logit"),
                               corstr  = "unstructured",
-                              std.err = "jack")
+                              std.err = "san.se")
 
         ## Detect aliasing explicitly rather than letting it surface later as an opaque
         ## singular-matrix error out of linearHypothesis
@@ -193,14 +193,19 @@ for (i in seq_len(nrow(transformed))) {
                  paste(names(coef(gee_fit_int))[is.na(coef(gee_fit_int))], collapse = ", "))
         }
 
-        ## 3. Extract coefficients for the interaction terms (protein:nps_id)
+        ### 3. Extract coefficients for the interaction terms (protein:nps_id)
         coef_vec <- coef(gee_fit_int)
         prot_terms <- grep("protein", names(coef_vec), value = TRUE)
         beta_prot  <- coef_vec[prot_terms]   # length = n.nps
         names(beta_prot) <- sub(":protein", "", sub("nps_id", "", prot_terms))   # rename
 
-        ## 4. Extract robust (sandwich) covariance matrix for *all* coefficients
-        V_full <- vcov(gee_fit_int)   # square matrix (dim = #coeffs)
+        ### 4. Extract covariance matrix for *all* coefficients
+        ## CR2 (bias-reduced) sandwich covariance — recomputed from residuals,
+        ## independent of whatever std.err= was set in geeglm()
+        V_full <- clubSandwich::vcovCR(
+                                    gee_fit_int,     # square matrix (dim = #coeffs)
+                                    cluster = longtest$protsample,
+                                    type    = "CR2")
 
         ## Subset to the protein‑by‑NPS block
         ## V_prot is the sampling-error covariance matrix for the per-domain protein coefficients
@@ -208,21 +213,28 @@ for (i in seq_len(nrow(transformed))) {
         ## and for any over-dispersion via the robust sandwich estimator
         V_prot <- V_full[prot_terms, prot_terms]   # n.nps x n.nps
 
-        ## 5. Do joint hypothesis test with Wald test
-        ## Wald test (Chi‑square approximation)
-        ## Save as lm_i for compatibility
-        lm_i <- car::linearHypothesis(gee_fit_int,
-                                      hypothesis.matrix = prot_terms)
+
+        ### 5. Do joint hypothesis test with Wald test
+        ## Small-sample-corrected joint test of the 7 protein:nps_id terms,
+        ## using Hotelling-Thurston-Zhang (HTZ) F-test with adjusted df
+        ## instead of a chi-square Wald test assuming K -> infinity
+        wald_i <- clubSandwich::Wald_test(gee_fit_int,
+                     constraints = constrain_zero(prot_terms),
+                     vcov        = "CR2",
+                     cluster     = longtest$protsample,
+                     test        = "HTZ")
+
 
         ## Extract summary statistics
         n <- length(unique(gee_fit_int$id))
-        stats_i <- GetStats(lm_i, modelfamily = modelfamily, var = predictorvar, n)
+        stats_i <- data.frame(wald_i, nobs = n)
 
-        list(beta = beta_prot, V = V_prot, stats = stats_i, error = NA_character_)
+        list(beta = beta_prot, V = V_prot, stats = wald_i, error = NA_character_)
 
     }, error = function(e) {
         list(beta = NA, V = NA,
-             stats = c(Chisq = NA_real_, P = NA_real_, nobs = NA_real_),
+             stats = data.frame(test = NA_character_, Fstat = NA_real_, df_num = NA_integer_,
+                       df_denom = NA_real_, pval = NA_real_, sig = NA_real_),
              error = conditionMessage(e))
     })
 
@@ -231,9 +243,9 @@ for (i in seq_len(nrow(transformed))) {
 
     results_list[[i]] <- list(
         protein       = protein_name,
-        Chisq         = unname(fit_result$stats["Chisq"]),
-        P             = unname(fit_result$stats["P"]),
-        nobs          = unname(fit_result$stats["nobs"]),
+        Fstat         = unname(fit_result$stats$Fstat),
+        P             = unname(fit_result$stats$p_val),
+        nobs          = unname(fit_result$stats$nobs),
         error         = fit_result$error,
         domain_counts = domain_counts
     )
@@ -245,7 +257,8 @@ if (n.errors > 0) {
                  " proteins failed and were skipped (see 'error' column in output)."))
 }
 
-summstats <- rbindlist(results_list)
+
+summstats <- rbindlist(lapply(results_list, as.data.table), fill = TRUE)
 setcolorder(summstats, "protein")
 
 
