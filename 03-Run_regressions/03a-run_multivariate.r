@@ -17,7 +17,7 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 source("~/comsv/Svattathil_Library/manhattan_and_qq_plot_functions.r")
 
 
-GetStats <- function(regression.out, modelfamily = modelfamily, var="protein") {
+GetStats <- function(regression.out, modelfamily = modelfamily, var="protein", nobs) {
     if(length(regression.out) == 1) {
         ## this can happen when robust regression fails and tryCatch returns NA
         return(c(Estimate = NA, SE = NA, P = NA, nobs = regression.out))
@@ -27,7 +27,6 @@ GetStats <- function(regression.out, modelfamily = modelfamily, var="protein") {
                P     = regression.out[2, "Pr(>Chisq)"])
 
     ## Add number of samples that were included in analysis
-    nobs = regression.out[1, "Res.Df"] / length(npsvars.bin)
     toreturn <- c(stats, nobs = nobs)
 
     return(toreturn)
@@ -39,7 +38,7 @@ GetStats <- function(regression.out, modelfamily = modelfamily, var="protein") {
 parser <- ArgumentParser()
 parser$add_argument("--cohort", type="character", default = "OHSU")
 parser$add_argument("--residset", type="character",
-                    help="regressSVs or ignoreSVs", default = "ignoreSVs")
+                    help="regressSVs or ignoreSVs or resid2_multi or noProtect", default = "ignoreSVs")
 
 ## Read from parser
 args <- parser$parse_args()
@@ -52,20 +51,21 @@ infiles <- list(phenos = paste0(indir, "phenos_cleaned_SVs_", args$cohort, ".txt
                 )
 
 ### Files to be created
-outdir <- paste0("2_Pipeline/03-Run_regressions/Prot_multivar/")
+outdir <- paste0("2_Pipeline/03-Run_regressions/Prot_multivar/Using_",
+                 Capwords(args$residset), "/")
 MyMkdir(outdir)
 
-outdir.mvmeta <- "Mvmeta/In/"
+outdir.mvmeta <- paste0(outdir, "Mvmeta/In/")
 MyMkdir(outdir.mvmeta)
 
-fileid <- paste0("prot_multivar_", args$cohort)
+fileid <- paste0("prot_multivar_", args$residset, "_", args$cohort)
 
 outfiles <- list(
     summstats     = paste0(outdir, fileid, "_regression_stats.txt"),
     qq            = paste0(outdir, fileid, "_qq.png"),
     log           = paste0(outdir, fileid, ".log"),
-    formeta_betas = paste0(outdir, outdir.mvmeta, fileid, "_betas.rds"),
-    formeta_covs  = paste0(outdir, outdir.mvmeta, fileid, "_covariances.rds")
+    formeta_betas = paste0(outdir.mvmeta, fileid, "_betas.rds"),
+    formeta_covs  = paste0(outdir.mvmeta, fileid, "_covariances.rds")
 )
 
 
@@ -122,6 +122,8 @@ names(beta_vectors) <- names(covariance_mats) <- rownames(transformed)   # add p
 print("Starting regressions for each protein")
 ## Set seed since multivariate seems to have some random function
 set.seed(24983423)
+
+
 summstats <- data.table(data.frame(t(sapply(1:nrow(transformed), function(i) {
     if(i %% 1000 == 0) { print(paste0(pN(i), " of ", pN(nrow(transformed)))) }
 
@@ -161,12 +163,12 @@ summstats <- data.table(data.frame(t(sapply(1:nrow(transformed), function(i) {
     ## using jacknife for std.err is better than the default, which is
     ## downward-biased with small sample size and will cause inflation in the Wald p-value
     gee_fit_int <- geeglm(update.formula(as.formula(modelform("outcome")),
-                                         . ~ . - protein + nps_id + protein:nps_id),
+                                         . ~ . -protein + nps_id + protein:nps_id),
                           id      = protsample,  # clustered by protsample
                           waves   = wave,        # used if "unstructured" corr structure
                           data    = longtest,
                           family  = binomial(link = "logit"),
-                          corstr  = "exchangeable",
+                          corstr  = "unstructured",
                           std.err = "jack")
 
     ## 3. Extract coefficients for the interaction terms (protein:nps_id)
@@ -194,8 +196,10 @@ summstats <- data.table(data.frame(t(sapply(1:nrow(transformed), function(i) {
     covariance_mats[[i]] <<- V_prot
 
     ## Extract and return summary statistics
-    stats_i <- GetStats(lm_i, modelfamily = modelfamily, var = predictorvar)
+    n <- length(unique(gee_fit_int$id))
+    stats_i <- GetStats(lm_i, modelfamily = modelfamily, var = predictorvar, n)
     return(stats_i)
+
 }))))
 
 
