@@ -218,7 +218,7 @@ for (i in seq_len(nrow(transformed))) {
         n <- length(unique(gee_fit_int$id))
         stats_i <- GetStats(lm_i, modelfamily = modelfamily, var = predictorvar, n)
 
-        return(list(beta = beta_prot, V = V_prot, stats = stats_i, error = NA_character_))
+        list(beta = beta_prot, V = V_prot, stats = stats_i, error = NA_character_)
 
     }, error = function(e) {
         list(beta = NA, V = NA,
