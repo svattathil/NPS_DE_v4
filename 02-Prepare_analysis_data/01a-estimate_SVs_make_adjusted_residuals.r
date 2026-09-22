@@ -39,22 +39,12 @@ parser$add_argument("--option", type = "character", default = "regressSVs",
 args <- parser$parse_args()
 
 
-### Set options
-## np is the  number of variables to protect in cleaning (including intercept)
-if(args$option == "regressSVs") {
-    np <- length(npsvars) + 1
-    fileid <- paste0(covarstring, "SVs")
-}
-
-if(args$option == "ignoreSVs") {
-    np <- length(npsvars) + 1
-    fileid <- covarstring
-}
-
-if(args$option == "noProtect") {
-    np <-  1
-    fileid <- paste0(covarstring, "_noProtect")
-}
+### Set fileid
+fileid <- switch(args$option,
+        regressSVs =  paste0(covarstring, "SVs"),
+        ignoreSVs = covarstring,
+        noProtect = paste0(covarstring, "_noProtect")
+        )
 
 
 ### Files that exist
@@ -163,16 +153,20 @@ if(!(all(phenos_withsvs$protsample == colnames(edata.countfiltered)))) {
 
 
 ### Do cleaning
-vars_to_regress <- switch(args$option,
-   regressSVs = c(nuisance_vars, sv_names),
-   ignoreSVs  = nuisance_vars,
-   noProtect  = nuisance_vars
+modelvars <- switch(args$option,
+      regressSVs = c(npsvars, nuisance_vars, sv_names),
+      ignoreSVs  = c(npsvars, nuisance_vars),
+      noProtect = c(nuisance_vars)
+      )
+
+## np is the  number of variables to protect in cleaning (including intercept)
+np <- switch(args$option,
+   regressSVs = length(npsvars) + 1,
+   ignoreSVs  = length(npsvars) + 1,
+   noProtect  = 1
    )
 
-modelform_forcleaning <- as.formula(paste("~ ",
-                                          paste0(c(npsvars,
-                                                   vars_to_regress),
-                                                 collapse = "+")))
+modelform_forcleaning <- as.formula(paste("~ ", paste0(modelvars, collapse = "+")))
 modmat_forcleaning <- model.matrix(modelform_forcleaning, data = phenos_withsvs)
 
 ## Make matching expression data including all proteins that passed count filtering
