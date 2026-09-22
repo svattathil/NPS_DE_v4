@@ -77,3 +77,7 @@ Rscript $scriptdir/aggregate_stats_to_excel.r --run females
 ## Sensitivity - adjust e4 expression
 run_limma_script01 e4_adj
 Rscript $scriptdir/02a-run-metafor.r --run e4_adj
+
+
+## Latent factors
+run_limma_script01 latfactor

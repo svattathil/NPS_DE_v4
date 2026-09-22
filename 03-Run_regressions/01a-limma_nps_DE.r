@@ -24,7 +24,7 @@ source("~/comsv/Svattathil_Library/manhattan_and_qq_plot_functions.r")
 ### CONSTANTS
 options(stringsAsFactors = FALSE)
 source("1_Code/project_constants.r")
-
+factornames <- c("f1") ## assuming there is only one factor
 
 ### FUNCTIONS ###
 source("1_Code/03-Run_regressions/01asub-limma_nps_DE_functions.r")
@@ -35,7 +35,7 @@ parser <- ArgumentParser(description = "limma DE of log2 protein abundance on NP
 
 ## Control model and sample set
 parser$add_argument("--run", default = "basic",
-                    help = "Specify the run (basic, severity, males, females, e4_adj)")
+                    help = "Specify the run (basic, severity, males, females, e4_adj, latfactor)")
 parser$add_argument("--cohort", default = "OHSU",
                     help = "Cohort label used in output file names.")
 ## Control limma
@@ -66,6 +66,10 @@ infiles <- list(
     prot   = "2_Pipeline/01-Explore_data/prot.pcafiltered.log2norm.txt",
     e4_dat = "0_Data/From_v3/e4_phenos_allcohorts.txt"
 )
+if(args$run == "latfactor") {
+    infiles$fac_scores <- paste0("2_Pipeline/02-Prepare_analysis_data/Latent_factors/",
+                                 "factor_scores_", args$cohort, ".txt")
+}
 
 ## code to run joint model for conditional and joint F test (for basic run only)
 script_run_basic_joint <- "1_Code/03-Run_regressions/01asub-run_basic_joint.r"
@@ -102,11 +106,15 @@ outfiles[["SA_plot"]] <- function(adomain) {
 
 ### Set some values based on the run specifics
 ### ( More of this happens later also)
-## npsvars for this run
-if(args$run == "severity") {
-    npsvars <- npsvars.sev
-} else {
-    npsvars <- npsvars.bin
+## predictors for this run
+if(args$run == "latfactor") {
+    predictors <- factornames
+} else{
+    if(args$run == "severity") {
+        predictors <- npsvars.sev
+    } else {
+        predictors <- npsvars.bin
+    }
 }
 
 ## min non-missing donors to keep protein in analysis
@@ -115,7 +123,7 @@ mincount <- ifelse(args$run %in% c("males", "females"), 25, 50)
 
 ## covars for this run
 ## SVs will be added on the fly
-if(args$run %in% c("basic", "severity")) {
+if(args$run %in% c("basic", "severity", "latfactor")) {
     covars <- c("Batch", "pmi", "age_death", "msex")
     fac_covars <- c("Batch")
 }
@@ -136,6 +144,9 @@ pheno <- fread(infiles$pheno)
 prot <- fread(infiles$prot)
 e4_dat <- fread(infiles$e4_dat)
 
+if(args$run == "latfactor") {
+    fac_scores <- fread(infiles$fac_scores)
+}
 ### Prepare data
 sample_id_col <- "protsample"
 protein_id_col <- names(prot)[1]
@@ -149,6 +160,12 @@ pheno[, (oldsvs) := NULL]
 ## Merge in e4 expression
 pheno[e4_dat, e4_expression := i.e4_expression, on = "protsample"]
 
+
+## Merge in factor scores, if necessary
+## Currently assuming there is only one factor
+if(args$run == "latfactor") {
+    pheno[fac_scores, (factornames) := mget(paste0("i.", factornames)), on = "protsample"]
+}
 
 ## Filter if necessary for this run
 if(args$run == "males") {
@@ -186,7 +203,7 @@ for (nm in fac_covars) pdat[, (nm) := factor(get(nm))]
 ### limma drops samples with missing covariates from every protein, so
 ### remove them once, up front, and report the count
 covar_ok <- pdat[, Reduce(`&`, lapply(.SD, function(v) !is.na(v))), .SDcols = covars]
-nps_any  <- pdat[, Reduce(`|`, lapply(.SD, function(v) !is.na(v))), .SDcols = npsvars]
+nps_any  <- pdat[, Reduce(`|`, lapply(.SD, function(v) !is.na(v))), .SDcols = predictors]
 keep_samp <- covar_ok & nps_any
 message("Samples dropped (missing covariate or no NPS observation): ", sum(!keep_samp))
 
@@ -207,13 +224,13 @@ message("Proteins with complete data (used for SVA): ", sum(complete_rows))
 
 
 ### Make list objects to hold results per domain
-per_domain <- diag_list <- qq_list <- vector("list", length(npsvars))
-names(per_domain) <- names(diag_list) <- names(qq_list) <- npsvars
+per_domain <- diag_list <- qq_list <- vector("list", length(predictors))
+names(per_domain) <- names(diag_list) <- names(qq_list) <- predictors
 
 
 
 ### Run for each domain in turn
-for (dom in npsvars) {
+for (dom in predictors) {
     ## Prepare data
     message("=== Per-domain model: ", dom)
     sub_pdat <- pdat[!is.na(get(dom))]   ## subset of donors with non-missing NPS for this domain
