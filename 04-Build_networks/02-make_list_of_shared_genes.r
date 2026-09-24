@@ -11,8 +11,8 @@ rm(list = ls())
 
 ##### CONSTANTS #####
 options(stringsAsFactors = FALSE)
-cohorts <- c("OHSU", "rush", "emory")
-softpowers <- c(OHSU = 6, rush = 7, emory = 9)
+source("1_Code/project_constants.r")
+softpowers <- c(OHSU = 9, rush = 9, emory = 9)
 
 
 ###### FUNCTIONS ######
@@ -35,11 +35,11 @@ args <- parser$parse_args()
 
 
 ### Files that exist
-infiles <- sapply(cohorts, function(acohort) { paste0("2_Pipeline/04-Build_networks/Wgcna_out/Selected_results/",
-                                                      acohort,
-                                                      "_softpower",
-                                                      softpowers[acohort], "_cutheight0.30_gene_conn_stats.txt") },
-                  simplify = FALSE)
+infiles <- sapply(cohorts, function(acohort) {
+    paste0("2_Pipeline/04-Build_networks/Wgcna_out/Cohort-specific/",
+           acohort, "_ignoreSVs_softpower",
+           softpowers[acohort], "_cutheight0.30_gene_conn_stats.txt") },
+    simplify = FALSE)
 
 
 ### Files to be created

@@ -1,0 +1,816 @@
+---
+author: "Selina Vattathil"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r goal, include = FALSE}
+###### GOAL ######
+```
+
+
+```{r online-resources, include = FALSE}
+## WGCNA package documentation
+## https://www.rdocumentation.org/packages/WGCNA/versions/1.73
+
+## one tutorial (there are many online)
+## https://bioinformaticsworkbook.org/tutorials/wgcna.html#gsc.tab=0
+
+## hub gene selection
+## https://support.bioconductor.org/p/69858/#70116
+```
+
+
+```{r load-packages, include = FALSE}
+library(data.table)
+library(argparse)
+library(WGCNA)
+library(ggplot2)
+library(robust)
+
+rm(list = ls())
+```
+
+
+```{r functions, include = FALSE}
+###### FUNCTIONS ######
+source("~/comsv/Svattathil_Library/svattathil_functions.r")
+
+GetCoefficientAndSE <- function(regression.out, type, var="miRNA") {
+    if(type=="ordinal") { return(summary(regression.out)$coefficients[var, c("Value", "Std. Error")]) }
+    else if(type %in% c("gaussian", "binomial", "lmm")) {
+        return(summary(regression.out)$coefficients[var, c("Estimate", "Std. Error")])
+    }
+}
+
+GetPvalue <- function(regression.out, type, var="miRNA") {
+    if(type=="ordinal") { return(pnorm(abs(summary(regression.out)$coefficient[var, "t value"]), lower.tail=FALSE) * 2) }
+    else if(type %in% c("binomial", "neg.binomial")) { summary(regression.out)$coefficients[var, "Pr(>|z|)"] }
+    else if(type %in% c("gaussian", "lmm")) { summary(regression.out)$coefficients[var, "Pr(>|t|)"] }
+}
+
+GetStats <- function(regression.out, modelfamily = "binomial", var="protein") {
+    ## Extract estimate, standard error, and P-value for protein
+    pcol <- ifelse(modelfamily == "binomial", "Pr(>|z|)", "Pr(>|t|)") ## labels differ for different model types
+    stats <- c(summary(regression.out)$coefficients[var, c("Estimate", "Std. Error", pcol)])
+    ## Add number of samples that were included in analysis
+    toreturn <- c(stats, nobs=length(regression.out$residuals) )
+    names(toreturn) <- c("Estimate", "SE", "P", "nobs")
+    return(toreturn)
+}
+
+
+```
+
+
+```{r setup, include = FALSE}
+###### SETUP ######
+### Command line arguments
+## Create parser
+parser <- ArgumentParser()
+parser$add_argument("--cohort", type="character", help="OHSU, rush, or emory", default = "emory")
+parser$add_argument("--softpower", type="integer", help="value for softpower", default = 9)
+parser$add_argument("--cutheight", type="double", help="value for mergeCutHeight", default = 0.30)
+parser$add_argument("--network_set", type="character", help="cohort-specific or consensus", default = "cohort-specific")
+
+
+## Read from parser
+args <- parser$parse_args()
+
+
+### Constants
+options(stringsAsFactors = FALSE)
+
+## To accomodate bug in robust lmROB function -- see
+## https://stackoverflow.com/questions/56334077/robust-regression-not-working-object-msg-ucv-not-found?rq=3
+## if the estimation gets to the situation that triggers this message, it will return NAs for
+## the P-values so we'll know that the estimation failed
+msg.UCV <- "A WORKAROUND"
+
+
+```
+
+
+---
+title: "Module association with latent factors for `r args$cohort`" 
+---
+
+
+```{r global-chunk-settings-1, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=TRUE, message=TRUE, include=TRUE, collapse=TRUE)
+```
+
+
+```{r word-document-settings-1, include=FALSE, eval=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4)
+```
+
+4+5
+```{r html-document-settings-1, include=FALSE, eval=TRUE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4)
+```
+
+
+```{r input}
+### Files that exist
+datdir <- "2_Pipeline/02-Prepare_analysis_data/"
+
+files <- list()
+files[["phenos"]]        <- paste0(datdir, "phenos_cleaned_", args$cohort, ".txt")
+files[["factor_scores"]] <- paste0(datdir, "Latent_factors/factor_scores_", args$cohort, ".txt")
+
+if(args$network_set == "cohort-specific") {
+    indir <- "2_Pipeline/04-Build_networks/Cohort-specific/Selected_results/"
+    runid <- paste0(args$cohort, "_softpower", args$softpower,
+                    "_cutheight", sprintf("%.2f", args$cutheight))
+}
+
+if(args$network_set == "consensus") {
+    indir <- paste0("2_Pipeline/04-Build_networks/Consensus/Auto_softpower", args$softpower, "/")
+    runid <- paste0(args$cohort, "auto")
+    
+}
+
+files[["eigengenes"]] = paste0(indir, runid, "_eigengenes.txt")
+
+```
+
+
+```{r output}
+### Files to be created
+outdir <- paste0(indir, "DEA_latent_factors/")
+MyMkdir(outdir)
+
+outfiles <- lapply(list(
+    regress_stats    = "_eigengene_regress_stats_latent_factors.txt",
+    sigmodules       = "_associated_modules_latent_factors.txt"
+), function(x) { paste0(outdir, runid, x) })
+
+
+```
+
+
+```{r read-data}
+###### MAIN ######
+### Read in data
+eigengenes <- fread(files[["eigengenes"]])
+phenos.all <- fread(files[["phenos"]])
+factor_scores <- fread(files[["factor_scores"]])
+                    
+```
+
+
+```{r prepare-data}
+### Prepare data
+### Define factor names
+factor_names <- setdiff(names(factor_scores), "protsample")
+
+
+### Define module eigengenes of interest (exclude grey)
+mes_to_test <- setdiff(colnames(eigengenes), c("protsample", "MEgrey"))
+
+
+### Merge phenos and factor scores
+phenos <- merge(phenos.all[, .(protsample, msex)], factor_scores, by = "protsample")
+
+
+### Add binary versions of factors
+for(afactor in factor_names) {
+    currfactor <- unlist(phenos[, ..afactor])
+    phenos[, paste0(afactor, ".2lev") := ifelse(currfactor < median(currfactor), 0, 1)]
+}
+rm(afactor)
+
+
+
+```
+
+## Distribution of factor scores
+
+For the `r args$cohort` dataset, we constructed 
+`r ncol(factor_scores)-1` latent factors based on the nine individual
+binary NPS variables (e.g., agitation, apathy anxiety...). 
+
+The vertical dotted line indicates the median
+
+```{r visualize-score-distributions, fig.height = 8}
+nfactors <- length(factor_names)
+par(mfrow=c(nfactors, 1))
+invisible(sapply(factor_names, function(afactor) {
+    toplot <- unlist(factor_scores[, afactor, with = FALSE])
+    hist(toplot, main = afactor, xlab = "", breaks = 30)
+    abline(v = median(toplot), lty = 2)
+}))
+```
+
+## Distribution of module eigengenes
+The WGCNA analysis identified `r length(mes_to_test)` modules. Here is the distribution of
+the eigengene for each module. 
+
+ 
+```{r visualize-eigengene-distributions, fig.height = 8}
+nmodules <- length(mes_to_test)
+par(mfrow=c(ceiling(nmodules/4),4)) # define number of rows based on number of modules
+
+invisible(sapply(mes_to_test, function(amodule) {
+    acol <- gsub("ME", "", amodule)
+    toplot <- unlist(eigengenes[, ..amodule])
+    hist(toplot, main = amodule, xlab = "", breaks = 30,
+         col = acol, border = "black", lwd=0.5)
+}))
+
+```
+
+
+
+
+## Module association with latent factors as continuous outcomes
+Here we test association between each module eigengene and latent
+factors constructed based on the individual NPS.
+
+From the histograms we see that the latent factors are generally not
+normally distributed, and in fact sometimes are closer to bimodal. So
+standard linear regression using the latent factors as outcomes does
+not seem a good choice. 
+Here I tried
+robust regression. 
+
+
+```{r run-regressions-gaussian, include=FALSE}
+## Define outcome distribution type
+vartype <- "gaussian"
+
+## Set up object to hold regression results
+## summs_list will be a list of data frames --
+##   each dataframe gives regression summary statistics, one row per module
+## resobj_list will be a list of lists --
+##   each sublist is a list of the fit objects for each module
+summs_list <- vector(mode="list")
+resobj_list <- vector(mode="list")
+
+
+### Iterate over outcomes
+for(afactor in factor_names) {
+    aform <- paste0(afactor, " ~ mod.eigen + msex")
+    
+    ## Set seed since lmRob produces approximations by a random algorithm
+    robust::lmRob.control(seed=523832, mxf=200, mxr=200, mxs=200)
+    
+    ## Run regression for each module eigengene (exclude grey)
+    
+    regression.results <- lapply(mes_to_test, function(amodule) {
+        ## Prepare regression data
+        ## Combine eigengenes with other necessary phenos
+        regression_data <- merge(eigengenes[, c("protsample", amodule), with = FALSE], phenos, by = "protsample")
+        setnames(regression_data, amodule, "mod.eigen") ## rename eigengene column to generic name
+        
+        ## Convert to data frame and add protsample as rownames
+        samps <- regression_data$protsample
+        setDF(regression_data)
+        rownames(regression_data) <- samps
+
+        ## Run regression
+        res.onemodule <- robust::lmRob(form = aform, data = regression_data, na.action = "na.exclude")
+        return(res.onemodule)
+    })
+    names(regression.results) <- mes_to_test
+
+    
+    ## Summarize results for this outcome
+    regression.summ <- data.frame(t(sapply(regression.results, GetStats, modelfamily = vartype, var = "mod.eigen")))
+    rownames(regression.summ) <- mes_to_test
+
+    ## Clean up
+    print(paste(" model", afactor, "--", "Cleaning up"))
+    summs_list[[afactor]] <- regression.summ
+    resobj_list[[afactor]] <- regression.results
+    rm(list=c("regression.results", "regression.summ", "aform"))
+}
+rm(afactor)
+
+names(summs_list) <- factor_names
+```
+
+```{r prepare-matrix-vis-gaussian}
+### Prepare results for matrix visualization
+## Use cbind to ensure that object is a matrix even when there is only one latent factor
+coeffs <- cbind(Reduce(cbind, lapply(summs_list, function(x) {signif(x$Estimate, 2) })))
+pvals <- cbind(Reduce(cbind, lapply(summs_list, function(x) {signif(x$P, 2) })))
+rownames(pvals) <- rownames(coeffs) <- mes_to_test
+colnames(pvals) <- colnames(coeffs) <- names(summs_list)
+
+textMatrix.regression <- paste0(coeffs, "\n(",
+                                pvals,  ")")
+dim(textMatrix.regression) <- dim(coeffs)
+
+## Get index for smallest p-value
+minind <- which(pvals==min(pvals), arr.ind=TRUE)
+
+ntests <- nrow(pvals) * ncol(pvals)
+bonfthresh <- 0.05/ntests
+```
+
+
+The heatmap is colored by the regression coefficient. The association
+p-value is given in parentheses.
+
+The smallest p-value is `r sprintf("%.1e", min(pvals))`, for the association between 
+eigengene `r rownames(pvals)[minind[1]] ` and
+`r colnames(pvals)[minind[2]]`. 
+
+The number of tests is `r ntests`, and the Bonferroni threshold at alpha 0.05
+is `r sprintf("%.1e", bonfthresh)`.
+
+```{r visualize-association-results-gaussian, include=TRUE, fig.height=11}
+par(mar = c(6, 8.5, 3, 3))
+zmax <- max(abs(coeffs))
+
+labeledHeatmap(Matrix = coeffs,
+               xLabels = names(summs_list),
+               yLabels = rownames(coeffs),
+               ySymbols = rownames(coeffs),
+               yColorLabels = TRUE,
+               colors = colorRampPalette(c("blue", "white", "red"))(30),
+               textMatrix = textMatrix.regression,
+               setStdMargins = FALSE,
+               cex.text = 0.5,
+               zlim = c(zmax*-1, zmax),
+               main = paste("Module-trait relationships (latentfactor ~ eigengene + sex)"))
+```
+
+
+```{r identify-sig-modules-gaussian}
+### Reformat association p-values to data table with module as column
+pvals_dt <- data.frame(pvals)
+pvals_dt$module <- sapply(rownames(pvals), function(x) { gsub("ME", "", x) })
+setDT(pvals_dt)
+setnames(pvals_dt, factor_names, paste0("pval_", factor_names))
+
+## Get min p-value and corresponding latentfactor for each module
+pval_cols <- paste0("pval_", factor_names)
+pvals_dt[, `:=` (
+    min_p = do.call(pmin, c(.SD, list()))
+    ), .SDcols = pval_cols]
+
+### Identify significant module-NPS association at several thresholds
+Getsig <- function(pvalrow, sigthresh = 0.05) {
+    ## get vector of pval_col names
+    vec <- pval_cols[which(pvalrow < sigthresh)] 
+
+    # reformat as comma-delimited list of NPS names
+    paste(sapply(vec, function(x) { gsub("pval_", "", x) }), collapse = ", ") 
+}
+
+pvals_dt[, latentfactor_sig05 := apply(.SD, 1, Getsig, sigthresh = 0.05), .SDcols = pval_cols]
+pvals_dt[, latentfactor_sig01 := apply(.SD, 1, Getsig, sigthresh = 0.01), .SDcols = pval_cols]
+setcolorder(pvals_dt, c("module", "min_p", "latentfactor_sig05", "latentfactor_sig01"))
+```
+
+Here are the modules that are significant at various thresholds. There
+are 
+`r sum(pvals_dt[, min_p < 0.05])` and 
+`r sum(pvals_dt[, min_p < 0.01])` modules with significant association
+at nominal p-values 0.05 and 0.01,
+respectively. 
+
+
+```{r table-sig-modules-gaussian}
+knitr::kable(pvals_dt)
+```
+
+## Check residual plots to evaluate model fit
+Here are the plots of residuals v. fitted values and the distribution
+of residuals for any associations
+significant at unadjusted p-value < 0.05.
+
+
+```{r check-residuals-gaussian}
+### Identify nominally significant associations
+sigassoc <- which(pvals < 0.05, arr.ind =TRUE)
+if(nrow(sigassoc) > 0) {
+    for(i in 1:nrow(sigassoc)) {
+        par(oma = c(1, 1, 1.5, 1))
+        curr_me <- rownames(pvals)[sigassoc[i, "row"]]
+        curr_factor <- colnames(pvals)[sigassoc[i, "col"]]
+        curr_res <- resobj_list[[curr_factor]][[curr_me]]
+
+
+        par(mfrow=c(1, 2))
+        plot(fitted(curr_res), residuals(curr_res),
+             main = "Residuals v. fitted values",
+             xlab = "Fitted Values", 
+             ylab = "Residuals")
+        abline(h = 0, col = "red", lty = 2)
+
+        plot(density(residuals(curr_res)),
+             main = "Density of residuals")
+        mtext(paste0("Factor ", curr_factor, " association with ", curr_me), outer = TRUE)    
+    }
+}
+```
+
+
+```{r finish-gaussian}
+### Prepare then write regression stats
+coeffs.dt <- data.frame(coeffs)
+pvals.dt <- data.frame(pvals)
+coeffs.dt$module <- rownames(coeffs)
+pvals.dt$module <- rownames(pvals)
+setDT(coeffs.dt)
+setDT(pvals.dt)
+setnames(coeffs.dt, factor_names, paste0(factor_names, "_coeff"))
+setnames(pvals.dt, factor_names, paste0(factor_names, "_pval"))
+
+regress_stats <- merge(coeffs.dt, pvals.dt, by = "module")
+
+### Write table of regression summary statistics
+write.table(regress_stats, file = outfiles[["regress_stats"]],
+            row.names = FALSE, quote = FALSE, sep = "\t")
+
+
+### Write significant module-trait association table
+write.table(pvals_dt, file = outfiles[["sigmodules"]],
+            row.names = FALSE, quote = FALSE, sep = "\t")
+
+```
+
+
+## Module association with latent factors as binary outcomes
+Since the latent factors tend to be almost bimodal and the
+residuals v. fitted plots show that residuals are not randomly
+distributed, maybe the model is not very reliable. So, I also
+transformed the latent factors to binary outcomes
+using median dichotomization and then used logistic regression to test
+for module association. 
+
+
+```{r run-regressions-binary, include=FALSE, eval = TRUE}
+## Define outcome distribution type
+vartype <- "binomial"
+
+## Set up object to hold regression results
+## summs_list will be a list of data frames --
+##   each dataframe gives regression summary statistics, one row per module
+## resobj_list will be a list of lists --
+##   each sublist is a list of the fit objects for each module
+summs_list <- vector(mode="list")
+resobj_list <- vector(mode="list")
+
+
+### Iterate over outcomes
+for(afactor in factor_names) {
+    ## Define model form
+    aform <- paste0(paste0(afactor, ".2lev"), " ~ mod.eigen + msex")
+    
+    ## Set seed since lmRob produces approximations by a random algorithm
+    robust::lmRob.control(seed=523832, mxf=200, mxr=200, mxs=200)
+    
+    ## Run regression for each module eigengene (exclude grey)
+    
+    regression.results <- lapply(mes_to_test, function(amodule) {
+        ## Prepare regression data
+        ## Combine eigengenes with other necessary phenos
+        regression_data <- merge(eigengenes[, c("protsample", amodule), with = FALSE], phenos, by = "protsample")
+        setnames(regression_data, amodule, "mod.eigen") ## rename eigengene column to generic name
+        
+        ## Convert to data frame and add protsample as rownames
+        samps <- regression_data$protsample
+        setDF(regression_data)
+        rownames(regression_data) <- samps
+
+        ## Run regression
+        res.onemodule <- robust::glmRob(form = aform, data = regression_data,
+                                        family = "binomial", na.action = "na.exclude")
+        return(res.onemodule)
+    })
+    names(regression.results) <- mes_to_test
+
+    
+    ## Summarize results for this outcome
+    regression.summ <- data.frame(t(sapply(regression.results, GetStats, modelfamily = vartype, var = "mod.eigen")))
+    rownames(regression.summ) <- mes_to_test
+
+    ## Clean up
+    print(paste(" model", afactor, ".2lev --", "Cleaning up"))
+    summs_list[[afactor]] <- regression.summ
+    resobj_list[[afactor]] <- regression.results
+    rm(list=c("regression.results", "regression.summ", "aform"))
+}
+rm(afactor)
+
+names(summs_list) <- factor_names
+```
+
+
+```{r prepare-matrix-vis-binary}
+### Prepare results for matrix visualization
+## Use cbind to ensure that object is a matrix even when there is only one latent factor
+coeffs <- cbind(Reduce(cbind, lapply(summs_list, function(x) {signif(x$Estimate, 2) })))
+pvals <- cbind(Reduce(cbind, lapply(summs_list, function(x) {signif(x$P, 2) })))
+rownames(pvals) <- rownames(coeffs) <- mes_to_test
+colnames(pvals) <- colnames(coeffs) <- names(summs_list)
+
+textMatrix.regression <- paste0(coeffs, "\n(",
+                                pvals,  ")")
+dim(textMatrix.regression) <- dim(coeffs)
+
+## Get index for smallest p-value
+minind <- which(pvals==min(pvals), arr.ind=TRUE)
+
+ntests <- nrow(pvals) * ncol(pvals)
+bonfthresh <- 0.05/ntests
+```
+
+The smallest p-value is `r sprintf("%.1e", min(pvals))`, for the association between 
+eigengene `r rownames(pvals)[minind[1]] ` and
+`r colnames(pvals)[minind[2]]`. 
+
+The number of tests is `r ntests`, and the Bonferroni threshold at alpha 0.05
+is `r sprintf("%.1e", bonfthresh)`.
+
+```{r visualize-association-results-binary, include=TRUE, fig.height=11}
+par(mar = c(6, 8.5, 3, 3))
+zmax <- max(abs(coeffs))
+
+labeledHeatmap(Matrix = coeffs,
+               xLabels = names(summs_list),
+               yLabels = rownames(coeffs),
+               ySymbols = rownames(coeffs),
+               yColorLabels = TRUE,
+               colors = colorRampPalette(c("blue", "white", "red"))(30),
+               textMatrix = textMatrix.regression,
+               setStdMargins = FALSE,
+               cex.text = 0.5,
+               zlim = c(zmax*-1, zmax),
+               main = paste("Module-trait relationships (latentfactor (binary) ~ eigengene + sex)"))
+```
+
+
+```{r identify-sig-modules-binary}
+### Reformat association p-values to data table with module as column
+pvals_dt <- data.frame(pvals)
+pvals_dt$module <- sapply(rownames(pvals), function(x) { gsub("ME", "", x) })
+setDT(pvals_dt)
+setnames(pvals_dt, factor_names, paste0("pval_", factor_names))
+
+## Get min p-value and corresponding latentfactor for each module
+pval_cols <- paste0("pval_", factor_names)
+pvals_dt[, `:=` (
+    min_p = do.call(pmin, c(.SD, list()))
+    ), .SDcols = pval_cols]
+
+### Identify significant module-NPS association at several thresholds
+Getsig <- function(pvalrow, sigthresh = 0.05) {
+    ## get vector of pval_col names
+    vec <- pval_cols[which(pvalrow < sigthresh)] 
+
+    # reformat as comma-delimited list of NPS names
+    paste(sapply(vec, function(x) { gsub("pval_", "", x) }), collapse = ", ") 
+}
+
+pvals_dt[, latentfactor_sig05 := apply(.SD, 1, Getsig, sigthresh = 0.05), .SDcols = pval_cols]
+pvals_dt[, latentfactor_sig01 := apply(.SD, 1, Getsig, sigthresh = 0.01), .SDcols = pval_cols]
+setcolorder(pvals_dt, c("module", "min_p", "latentfactor_sig05", "latentfactor_sig01"))
+```
+
+Here are the modules that are significant at various thresholds. There
+are 
+`r sum(pvals_dt[, min_p < 0.05])` and 
+`r sum(pvals_dt[, min_p < 0.01])` modules with significant association
+at nominal p-values 0.05 and 0.01,
+respectively. 
+
+
+```{r table-sig-modules-binary}
+knitr::kable(pvals_dt)
+```
+
+
+## Check residual plots to evaluate model fit
+These plots would be more useful if I added the loess line to check
+linearity. If we want to use these plots, I should add that. 
+
+```{r check-residuals-binary, fig.width = 4}
+### Identify nominally significant associations
+sigassoc <- which(pvals < 0.05, arr.ind =TRUE)
+if(nrow(sigassoc) > 0) {
+    for(i in 1:nrow(sigassoc)) {
+        par(oma = c(1, 1, 1.5, 1))
+        curr_me <- rownames(pvals)[sigassoc[i, "row"]]
+        curr_factor <- colnames(pvals)[sigassoc[i, "col"]]
+        curr_res <- resobj_list[[curr_factor]][[curr_me]]
+
+
+        par(mfrow=c(1, 1))
+        plot(fitted(curr_res), residuals(curr_res, type = "deviance"),
+             main = "Deviance residuals v. fitted values",
+             xlab = "Fitted Values", 
+             ylab = "Deviance Residuals")
+        abline(h = 0, col = "red", lty = 2)
+
+        mtext(paste0("Factor ", curr_factor, " association with ", curr_me), outer = TRUE)   
+    }
+}
+```
+
+
+## Module association with eigengenes as outcomes
+Lastly, since the module eigengenes look more normally distributed
+than the latent factors, I tried ordinary linear regression using the
+module eigengenes as the outcomes and the latent factors as the predictors. 
+
+
+
+```{r run-ordinary-gaussian, include=FALSE}
+## Define outcome distribution type
+vartype <- "gaussian"
+
+## Set up object to hold regression results
+## summs_list will be a list of data frames --
+##   each dataframe gives regression summary statistics, one row per module
+## resobj_list will be a list of lists --
+##   each sublist is a list of the fit objects for each module
+summs_list <- vector(mode="list")
+resobj_list <- vector(mode="list")
+
+
+### Iterate over latent factors
+for(afactor in factor_names) {
+    aform <- paste0("mod.eigen", " ~ ", afactor, "+ msex")
+    
+    ## Run regression for each module eigengene (exclude grey)
+    
+    regression.results <- lapply(mes_to_test, function(amodule) {
+        ## Prepare regression data
+        ## Combine eigengenes with other necessary phenos
+        regression_data <- merge(eigengenes[, c("protsample", amodule), with = FALSE], phenos, by = "protsample")
+        setnames(regression_data, amodule, "mod.eigen") ## rename eigengene column to generic name
+        
+        ## Convert to data frame and add protsample as rownames
+        samps <- regression_data$protsample
+        setDF(regression_data)
+        rownames(regression_data) <- samps
+
+        ## Run regression
+        res.onemodule <- glm(form = aform, data = regression_data, na.action = "na.exclude", family = vartype)
+        return(res.onemodule)
+    })
+    names(regression.results) <- mes_to_test
+
+    
+    ## Summarize results for this outcome
+    regression.summ <- data.frame(t(sapply(regression.results, GetStats, modelfamily = vartype, var = afactor)))
+    rownames(regression.summ) <- mes_to_test
+
+    ## Clean up
+    print(paste(" model", afactor, "--", "Cleaning up"))
+    summs_list[[afactor]] <- regression.summ
+    resobj_list[[afactor]] <- regression.results
+    rm(list=c("regression.results", "regression.summ", "aform"))
+}
+rm(afactor)
+
+names(summs_list) <- factor_names
+```
+
+
+```{r prepare-matrix-vis-ordinary}
+### Prepare results for matrix visualization
+## Use cbind to ensure that object is a matrix even when there is only one latent factor
+coeffs <- cbind(Reduce(cbind, lapply(summs_list, function(x) {signif(x$Estimate, 2) })))
+pvals <- cbind(Reduce(cbind, lapply(summs_list, function(x) {signif(x$P, 2) })))
+rownames(pvals) <- rownames(coeffs) <- mes_to_test
+colnames(pvals) <- colnames(coeffs) <- names(summs_list)
+
+textMatrix.regression <- paste0(coeffs, "\n(",
+                                pvals,  ")")
+dim(textMatrix.regression) <- dim(coeffs)
+
+## Get index for smallest p-value
+minind <- which(pvals==min(pvals), arr.ind=TRUE)
+
+ntests <- nrow(pvals) * ncol(pvals)
+bonfthresh <- 0.05/ntests
+```
+
+The association p-value is given in parentheses.
+
+The smallest p-value is `r sprintf("%.1e", min(pvals))`, for the association between 
+eigengene `r rownames(pvals)[minind[1]] ` and
+`r colnames(pvals)[minind[2]]`. 
+
+The number of tests is `r ntests`, and the Bonferroni threshold at alpha 0.05
+is `r sprintf("%.1e", bonfthresh)`.
+
+```{r visualize-association-results-ordinary, include=TRUE, fig.height=11}
+par(mar = c(6, 8.5, 3, 3))
+zmax <- max(abs(coeffs))
+
+labeledHeatmap(Matrix = coeffs,
+               xLabels = names(summs_list),
+               yLabels = rownames(coeffs),
+               ySymbols = rownames(coeffs),
+               yColorLabels = TRUE,
+               colors = colorRampPalette(c("blue", "white", "red"))(30),
+               textMatrix = textMatrix.regression,
+               setStdMargins = FALSE,
+               cex.text = 0.5,
+               zlim = c(zmax*-1, zmax),
+               main = paste("Module-trait relationships (eigengene ~ latentfactor + sex)"))
+```
+
+```{r identify-sig-modules-ordinary}
+### Reformat association p-values to data table with module as column
+pvals_dt <- data.frame(pvals)
+pvals_dt$module <- sapply(rownames(pvals), function(x) { gsub("ME", "", x) })
+setDT(pvals_dt)
+setnames(pvals_dt, factor_names, paste0("pval_", factor_names))
+
+## Get min p-value and corresponding latentfactor for each module
+pval_cols <- paste0("pval_", factor_names)
+pvals_dt[, `:=` (
+    min_p = do.call(pmin, c(.SD, list()))
+    ), .SDcols = pval_cols]
+
+### Identify significant module-NPS association at several thresholds
+Getsig <- function(pvalrow, sigthresh = 0.05) {
+    ## get vector of pval_col names
+    vec <- pval_cols[which(pvalrow < sigthresh)] 
+
+    # reformat as comma-delimited list of NPS names
+    paste(sapply(vec, function(x) { gsub("pval_", "", x) }), collapse = ", ") 
+}
+
+pvals_dt[, latentfactor_sig05 := apply(.SD, 1, Getsig, sigthresh = 0.05), .SDcols = pval_cols]
+pvals_dt[, latentfactor_sig01 := apply(.SD, 1, Getsig, sigthresh = 0.01), .SDcols = pval_cols]
+setcolorder(pvals_dt, c("module", "min_p", "latentfactor_sig05", "latentfactor_sig01"))
+```
+
+Here are the modules that are significant at various thresholds. There
+are 
+`r sum(pvals_dt[, min_p < 0.05])` and 
+`r sum(pvals_dt[, min_p < 0.01])` modules with significant association
+at nominal p-values 0.05 and 0.01,
+respectively. 
+
+
+```{r table-sig-modules-ordinary}
+knitr::kable(pvals_dt)
+```
+
+## Check residual plots to evaluate model fit
+Here are the plots of residuals v. fitted values and the distribution
+of residuals for any associations
+significant at unadjusted p-value < 0.05.
+
+
+```{r check-residuals-ordinary}
+### Identify nominally significant associations
+sigassoc <- which(pvals < 0.05, arr.ind =TRUE)
+if(nrow(sigassoc) > 0) {
+    for(i in 1:nrow(sigassoc)) {
+        par(oma = c(1, 1, 1.5, 1))
+        curr_me <- rownames(pvals)[sigassoc[i, "row"]]
+        curr_factor <- colnames(pvals)[sigassoc[i, "col"]]
+        curr_res <- resobj_list[[curr_factor]][[curr_me]]
+
+
+        par(mfrow=c(1, 2))
+        plot(fitted(curr_res), residuals(curr_res),
+             main = "Residuals v. fitted values",
+             xlab = "Fitted Values", 
+             ylab = "Residuals")
+        abline(h = 0, col = "red", lty = 2)
+
+        plot(density(residuals(curr_res)),
+             main = "Density of residuals")
+        mtext(paste0("Factor ", curr_factor, " association with ", curr_me), outer = TRUE)    
+    }
+}
+```
+
+```{r finish-ordinary}
+### Prepare then write regression stats
+coeffs.dt <- data.frame(coeffs)
+pvals.dt <- data.frame(pvals)
+coeffs.dt$module <- rownames(coeffs)
+pvals.dt$module <- rownames(pvals)
+setDT(coeffs.dt)
+setDT(pvals.dt)
+setnames(coeffs.dt, factor_names, paste0(factor_names, "_coeff"))
+setnames(pvals.dt, factor_names, paste0(factor_names, "_pval"))
+
+regress_stats <- merge(coeffs.dt, pvals.dt, by = "module")
+
+### Write table of regression summary statistics
+write.table(regress_stats, file = outfiles[["regress_stats"]],
+            row.names = FALSE, quote = FALSE, sep = "\t")
+
+
+### Write significant module-trait association table
+write.table(pvals_dt, file = outfiles[["sigmodules"]],
+            row.names = FALSE, quote = FALSE, sep = "\t")
+
+```
+
