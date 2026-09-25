@@ -20,17 +20,29 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 
 
 ###### SETUP ######
+## Create parser
+parser <- ArgumentParser()
+parser$add_argument("--residset", type="character",
+                    help="regressSVs or ignoreSVs or resid2_multi or noProtect", default = "ignoreSVs")
+
+## Read from parser
+args <- parser$parse_args()
+
+
+
 ### Files that exist
-indir <- "2_Pipeline/03-Run_regressions/Prot_multivar/Mvmeta/In/"
+
+indir1 <- paste0("2_Pipeline/03-Run_regressions/Prot_multivar/Using_", Capwords(args$residset), "/Mvmeta/")
+indir2 <- paste0(indir1, "In/")
 File.betas <- function(acohort) {
-    paste0(indir, "prot_multivar_", acohort, "_betas.rds") }
+    paste0(indir2, "prot_multivar_", args$residset, "_", acohort, "_betas.rds") }
 
 File.covarmat <- function(acohort) {
-    paste0(indir, "prot_multivar_", acohort, "_covariances.rds") }
+    paste0(indir2, "prot_multivar_", args$residset, "_", acohort, "_covariances.rds") }
 
 
 ### Files to be created
-outdir <- "2_Pipeline/03-Run_regressions/Prot_multivar/Mvmeta/Out/"
+outdir <- paste0(indir1, "Out/")
 MyMkdir(outdir)
 outfiles <- list(out_tab = paste0(outdir, "wald_results.txt"))
 
@@ -47,34 +59,49 @@ proteins_to_test <- intersect(names(betas[[1]]), intersect(names(betas[[2]]), na
 
 ## Run meta-analysis for each protein in turn
 set.seed(98873)
-meta_res <- sapply(1:length(proteins_to_test), function(i) {
+meta_res <- vector()
+
+for(i in 1:length(proteins_to_test)) {
     if(i %% 1000 == 0) { print(paste0(pN(i), " of ", pN(length(proteins_to_test)))) }
 
     aprot <- proteins_to_test[i]
 
     ## Extract beta vector and covariance matrix for current protein for each cohort
-    ## covarscols define column/row names corresponding to NPS of interest
+    ## covarcols define column/row names corresponding to NPS of interest
     ## beta_mat is a matrix with one row per cohort and one column per NPS
     ## cov_list is a list with one element per cohort, each element is a n.nps x n.nps matrix
-    covarcols <- paste0("protein:nps_id", vars_formulti)
+    covarcols <- paste0("nps_id", vars_formulti, ":protein")
     beta_mat <- t(sapply(cohorts, function(acohort) {
         betas[[acohort]][[aprot]][vars_formulti] }))  ## 3 x length(vars_formulti)
+
     cov_list  <- lapply(cohorts, function(acohort) {
-        covarmats[[acohort]][[aprot]][covarcols, covarcols] })
+        currmat <- covarmats[[acohort]][[aprot]]
+
+        ## some matrices are NULL for whatever reason; handle that
+        toreturn <- ifelse(is.na(currmat), NA, currmat[covarcols, covarcols])
+        return(toreturn)
+    })
 
 
     ## Fit the multivariate random‑effects meta‑analysis
     ## This gives pooled protein effect
-    fit_mv <- mixmeta(beta_mat,
-                      S = cov_list,
-                      method = "reml")
+    if((all(!is.na(cov_list)))) {
+        fit_mv <- mixmeta(beta_mat,
+                          S = cov_list,
+                          method = "reml")
                                         #summary(fit_mv)
 
     ## Joint test that all 9 p-values are 0
     res <- car::linearHypothesis(fit_mv, hypothesis.matrix = diag(length(coef(fit_mv))))
 
-    return(res[["Pr(>Chisq)"]][2])
-})
+    protres <- res[["Pr(>Chisq)"]][2]
+    }else {
+        protres <- NA_real_
+    }
+
+     meta_res[i] <- protres
+}
+#rm(i)
 
 
 ### Make object for print
