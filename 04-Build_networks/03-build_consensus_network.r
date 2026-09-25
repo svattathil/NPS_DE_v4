@@ -35,7 +35,7 @@ if(args$use_powervec1) {
     network_group  <- "powervec1"
     softpower <- softpowers_using_shared_genes
 } else{
-    network_group <- paste0("auto_softpower", args$auto_softpwer)
+    network_group <- paste0("auto_softpower", args$auto_softpower)
     softpower <- args$auto_softpower
 }
 

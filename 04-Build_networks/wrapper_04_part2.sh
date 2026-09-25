@@ -23,10 +23,6 @@ scriptdir=1_Code/04-Build_networks/
 outdir=2_Pipeline/04-Build_networks/
 
 
-: <<EOF
- 
-
-
 ## 7. Prepare to build consensus networks
 ### Run in interactive session
 scriptfile=$scriptdir/01a-run_wgcna.rmd
@@ -97,8 +93,6 @@ cmd+=('--network_set ' consensus)
 ## execute command
 eval ${cmd[*]}
 
-EOF
-
 ## 2. Make list of shared genes
 Rscript $scriptdir/02-make_list_of_shared_genes.r
 
@@ -113,31 +107,12 @@ residset=ignoreSVs
 for softpower in 7 8 9
 do
     ## Build consensus network and run per-cohort NPS association
-    Rscript $scriptfile3 \
-	    --auto_softpower $softpower --residset $residset
+    Rscript $scriptfile3 --auto_softpower $softpower --residset $residset
 
     ## Do meta-analysis for NPS association
-    Rscript $scriptfile4 \
-	    --auto_softpower $softpower
+    Rscript $scriptfile4 --auto_softpower $softpower
 
     ## Extract significant associations
-    Rscript $scriptfile5 \
-	    --auto_softpower $softpower
+    Rscript $scriptfile5 --auto_softpower $softpower
 done
-
-
-### 3. Test association between consensus modules and latent factors ###
-### Submit batch job
-sbatch --array=4-6 $scriptdir/06-sbmt_test_latent_factor_association.slurm
-
-
-
-## 9. Do gene set enrichment for consensus modules
-### Submit batch job
-## Specify array tasks in the submit script as necessary
-scriptfile=$scriptdir/07-sbmt_test_module_enrichment.slurm
-sbatch $scriptfile
-
-
-
 

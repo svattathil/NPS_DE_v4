@@ -19,13 +19,13 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 parser <- ArgumentParser()
 parser$add_argument("--network_set", type = "character",
                     help = "Consensus or Cohort-specific",
-                    default = "Cohort-specific")
+                    default = "Consensus")
 parser$add_argument("--network_group", type = "character",
                     help = "e.g., Auto_softpower7",
-                    default = "Auto_softpower8")
+                    default = "Auto_softpower9")
 parser$add_argument("--runid", type = "character",
                     help = "",
-                    default = "emory_softpower9_cutheight0.30")
+                    default = "auto_softpower9_OHSU")
 parser$add_argument("--pthresh", type = "double",
                     help = "threshold for padjust for enrichment",
                     default = 0.10)
@@ -46,7 +46,7 @@ if(args$network_set == "Cohort-specific") {
 }
 
 if(args$network_set == "Consensus") {
-    indir <- paste0("2_Pipeline/04-Build_networks/Consensus/", args$network_group, "/")
+    indir <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/", args$network_group, "/")
 }
 
 files <- list(gene_stats = paste0(indir, args$runid, "_gene_conn_stats.txt")
@@ -68,7 +68,7 @@ if(args$network_set == "Consensus") {
 }
 
 if(args$truncate) {
-    exce_outpref <- paste0(excel_outpref, "_truncated")
+    excel_outpref <- paste0(excel_outpref, "_truncated")
 }
 
 excel_outfile <- paste0(excel_outpref, ".xlsx")

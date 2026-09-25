@@ -29,7 +29,7 @@ args <- parser$parse_args()
 
 
 ### Files that exist
-indir <- paste0("2_Pipeline/04-Build_networks/Consensus/Auto_softpower", args$auto_softpower, "/")
+indir <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/Auto_softpower", args$auto_softpower, "/")
 infiles <- list(specific = paste0(indir, "nps_regression_results_per-cohort.txt"),
                 meta     = paste0(indir, "nps_regression_results_meta.txt"))
 

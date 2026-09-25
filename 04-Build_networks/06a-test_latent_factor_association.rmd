@@ -45,7 +45,8 @@ GetCoefficientAndSE <- function(regression.out, type, var="miRNA") {
 }
 
 GetPvalue <- function(regression.out, type, var="miRNA") {
-    if(type=="ordinal") { return(pnorm(abs(summary(regression.out)$coefficient[var, "t value"]), lower.tail=FALSE) * 2) }
+    if(type=="ordinal") {
+        return(pnorm(abs(summary(regression.out)$coefficient[var, "t value"]), lower.tail=FALSE) * 2) }
     else if(type %in% c("binomial", "neg.binomial")) { summary(regression.out)$coefficients[var, "Pr(>|z|)"] }
     else if(type %in% c("gaussian", "lmm")) { summary(regression.out)$coefficients[var, "Pr(>|t|)"] }
 }
@@ -72,7 +73,8 @@ parser <- ArgumentParser()
 parser$add_argument("--cohort", type="character", help="OHSU, rush, or emory", default = "emory")
 parser$add_argument("--softpower", type="integer", help="value for softpower", default = 9)
 parser$add_argument("--cutheight", type="double", help="value for mergeCutHeight", default = 0.30)
-parser$add_argument("--network_set", type="character", help="cohort-specific or consensus", default = "cohort-specific")
+parser$add_argument("--network_set", type="character", help="cohort-specific or consensus",
+                    default = "cohort-specific")
 
 
 ## Read from parser
@@ -81,13 +83,6 @@ args <- parser$parse_args()
 
 ### Constants
 options(stringsAsFactors = FALSE)
-
-## To accomodate bug in robust lmROB function -- see
-## https://stackoverflow.com/questions/56334077/robust-regression-not-working-object-msg-ucv-not-found?rq=3
-## if the estimation gets to the situation that triggers this message, it will return NAs for
-## the P-values so we'll know that the estimation failed
-msg.UCV <- "A WORKAROUND"
-
 
 ```
 
@@ -106,7 +101,6 @@ knitr::opts_chunk$set(echo=FALSE, warning=TRUE, message=TRUE, include=TRUE, coll
 knitr::opts_chunk$set(fig.width=7, fig.height=4)
 ```
 
-4+5
 ```{r html-document-settings-1, include=FALSE, eval=TRUE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4)
 ```
@@ -117,7 +111,7 @@ knitr::opts_chunk$set(fig.width=7, fig.height=4)
 datdir <- "2_Pipeline/02-Prepare_analysis_data/"
 
 files <- list()
-files[["phenos"]]        <- paste0(datdir, "phenos_cleaned_", args$cohort, ".txt")
+files[["phenos"]]        <- paste0(datdir, "phenos_cleaned_SVs_", args$cohort, ".txt")
 files[["factor_scores"]] <- paste0(datdir, "Latent_factors/factor_scores_", args$cohort, ".txt")
 
 if(args$network_set == "cohort-specific") {
@@ -127,8 +121,8 @@ if(args$network_set == "cohort-specific") {
 }
 
 if(args$network_set == "consensus") {
-    indir <- paste0("2_Pipeline/04-Build_networks/Consensus/Auto_softpower", args$softpower, "/")
-    runid <- paste0(args$cohort, "auto")
+    indir <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/Auto_softpower", args$softpower, "/")
+    runid <- paste0("auto_softpower", args$softpower, "_", args$cohort)
     
 }
 
@@ -189,10 +183,10 @@ rm(afactor)
 ## Distribution of factor scores
 
 For the `r args$cohort` dataset, we constructed 
-`r ncol(factor_scores)-1` latent factors based on the nine individual
+`r ncol(factor_scores)-1` latent factors based on the individual
 binary NPS variables (e.g., agitation, apathy anxiety...). 
 
-The vertical dotted line indicates the median
+The vertical dotted line indicates the median.
 
 ```{r visualize-score-distributions, fig.height = 8}
 nfactors <- length(factor_names)
@@ -223,18 +217,9 @@ invisible(sapply(mes_to_test, function(amodule) {
 ```
 
 
-
-
 ## Module association with latent factors as continuous outcomes
 Here we test association between each module eigengene and latent
 factors constructed based on the individual NPS.
-
-From the histograms we see that the latent factors are generally not
-normally distributed, and in fact sometimes are closer to bimodal. So
-standard linear regression using the latent factors as outcomes does
-not seem a good choice. 
-Here I tried
-robust regression. 
 
 
 ```{r run-regressions-gaussian, include=FALSE}
@@ -252,10 +237,7 @@ resobj_list <- vector(mode="list")
 
 ### Iterate over outcomes
 for(afactor in factor_names) {
-    aform <- paste0(afactor, " ~ mod.eigen + msex")
-    
-    ## Set seed since lmRob produces approximations by a random algorithm
-    robust::lmRob.control(seed=523832, mxf=200, mxr=200, mxs=200)
+    aform <- paste0("mod.eigen ~ ", afactor)
     
     ## Run regression for each module eigengene (exclude grey)
     
@@ -271,14 +253,15 @@ for(afactor in factor_names) {
         rownames(regression_data) <- samps
 
         ## Run regression
-        res.onemodule <- robust::lmRob(form = aform, data = regression_data, na.action = "na.exclude")
+        res.onemodule <- lm(form = aform, data = regression_data, na.action = "na.exclude")
         return(res.onemodule)
     })
     names(regression.results) <- mes_to_test
 
     
     ## Summarize results for this outcome
-    regression.summ <- data.frame(t(sapply(regression.results, GetStats, modelfamily = vartype, var = "mod.eigen")))
+    regression.summ <- data.frame(t(sapply(regression.results, GetStats,
+                                           modelfamily = vartype, var = afactor)))
     rownames(regression.summ) <- mes_to_test
 
     ## Clean up

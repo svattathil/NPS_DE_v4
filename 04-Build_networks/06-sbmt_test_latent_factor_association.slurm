@@ -21,45 +21,27 @@ cutheight="0.30"
 case $SLURM_ARRAY_TASK_ID in
     1)
         cohort=OHSU
-	network_set="cohort-specific"
-	softpower=6
-	runid=${cohort}_softpower${softpower}_cutheight${cutheight}
+	network_set="consensus"
+	softpower=9
+	runid=${cohort}_consensus_auto_softpower${softpower}
         ;;
     2)
         cohort=rush
-	network_set="cohort-specific"
-	softpower=7
-	runid=${cohort}_softpower${softpower}_cutheight${cutheight}
+	network_set="consensus"
+	softpower=9
+	runid=${cohort}_consensus_auto_softpower${softpower}
         ;;
     3)
         cohort=emory
-	network_set="cohort-specific"
+	network_set="consensus"
 	softpower=9
-	runid=${cohort}_softpower${softpower}_cutheight${cutheight}
-        ;;
-    4)
-        cohort=OHSU
-	network_set="consensus"
-	softpower=8
-	runid=${cohort}_consensus_auto_softpower${softpower}
-        ;;
-    5)
-        cohort=rush
-	network_set="consensus"
-	softpower=8
-	runid=${cohort}_consensus_auto_softpower${softpower}
-        ;;
-    6)
-        cohort=emory
-	network_set="consensus"
-	softpower=8
 	runid=${cohort}_consensus_auto_softpower${softpower}
         ;;
 esac
 
 
 ## Files that exist
-scriptfile=1_Code/04-Build_networks/03a-test_latent_factor_association.rmd
+scriptfile=1_Code/04-Build_networks/06a-test_latent_factor_association.rmd
 
 
 ## Files to be created
@@ -68,10 +50,11 @@ tmpdir=Tmp/${runid}/
 
 
 ## Define command
+outdir=2_Pipeline/04-Build_networks/Wgcna_out/Consensus/Auto_softpower${softpower}
 cmd=(R --slave -e )
 cmd+=("'rmarkdown::render(")
 cmd+=('"'$scriptfile'",')
-cmd+=('output_dir=paste0(getwd(), "/2_Pipeline/Reports/"),')
+cmd+=('output_dir="'${outdir}'",')
 cmd+=('output_file="'${outputfile}'",')
 cmd+=('knit_root_dir=getwd(),')
 cmd+=('intermediates_dir="'${tmpdir}'",')
