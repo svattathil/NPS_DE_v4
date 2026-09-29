@@ -2,7 +2,7 @@
 #SBATCH --job-name=wrapper03_2
 #SBATCH --nodes=1
 #SBATCH --mem=16G
-#SBATCH --array=1,4,7
+#SBATCH --array=3,6,9
 #SBATCH --cpus-per-task=1
 #SBATCH --time=0-10:00:00 
 #SBATCH --output=Slurmout/%x-%A_%a.o

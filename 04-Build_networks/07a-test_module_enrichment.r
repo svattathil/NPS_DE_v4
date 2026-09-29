@@ -64,7 +64,7 @@ if(args$network_set == "Consensus") {
     excel_outpref <- file.path(out_dir, paste0("consensus_modules_",
                                                tolower(args$network_group), "_pthresh",
                                                args$pthresh,
-                                               "_gene_set_enrichment.xlsx"))
+                                               "_gene_set_enrichment"))
 }
 
 if(args$truncate) {
