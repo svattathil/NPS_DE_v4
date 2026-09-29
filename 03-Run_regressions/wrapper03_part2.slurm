@@ -2,7 +2,7 @@
 #SBATCH --job-name=wrapper03_2
 #SBATCH --nodes=1
 #SBATCH --mem=16G
-#SBATCH --array=1-9 
+#SBATCH --array=1,4,7
 #SBATCH --cpus-per-task=1
 #SBATCH --time=0-10:00:00 
 #SBATCH --output=Slurmout/%x-%A_%a.o
@@ -58,8 +58,19 @@ case $SLURM_ARRAY_TASK_ID in
         residset=resid2_multi
 	cohort=emory
         ;;
+    10)  
+        residset=regressSVs
+	cohort=OHSU
+        ;;
+    11)
+        residset=regressSVs
+	cohort=rush
+        ;;
+    12)
+        residset=regressSVs
+	cohort=emory
+        ;;
 esac
-
 
 
 ### Multivariate

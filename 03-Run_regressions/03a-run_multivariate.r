@@ -26,22 +26,6 @@ DomainCounts <- function(longtest) {
 }
 
 
-GetStats <- function(regression.out, modelfamily = modelfamily, var="protein", nobs) {
-    if(length(regression.out) == 1) {
-        ## this can happen when robust regression fails and tryCatch returns NA
-        return(c(Estimate = NA, SE = NA, P = NA, nobs = regression.out))
-    }
-
-    stats <- c(Chisq = regression.out[2, "Chisq"],
-               P     = regression.out[2, "Pr(>Chisq)"])
-
-    ## Add number of samples that were included in analysis
-    toreturn <- c(stats, nobs = nobs)
-
-    return(toreturn)
-}
-
-
 ###### SETUP ######
 ## Create parser
 parser <- ArgumentParser()
@@ -87,8 +71,6 @@ phenos.all <- fread(infiles$phenos)
 ### Define model and model family
 ## For multivariate, we need to run for each NPS in turn
 ## so the modelform is a function
-modelfamily <- "binomial"
-predictorvar <- "protein"
 modelform <- function(currnps) { paste0(currnps, " ~ protein") }
 
 
@@ -128,9 +110,10 @@ beta_vectors <- covariance_mats <- as.list(rep(NA, nrow(transformed)))   # initi
 names(beta_vectors) <- names(covariance_mats) <- rownames(transformed)   # add protein names
 results_list <- vector("list", nrow(transformed))
 
+
 ### Run regression for each protein in turn
 print("Starting regressions for each protein")
-## Set seed since multivariate seems to have some random function
+## Set seed in case multivariate has some random function
 set.seed(24983423)
 
 for (i in seq_len(nrow(transformed))) {
@@ -154,8 +137,8 @@ for (i in seq_len(nrow(transformed))) {
         setDT(test)
 
         ## Convert to long format
-        ## This is a cheaty way to get predictor variables + sample id column
-        idvars <- all.vars(as.formula(modelform("protsample")))
+        idvars <- all.vars(as.formula(modelform("protsample"))) # cheaty way to get predictor
+                                                                #  vars + sample id column
         longtest <- melt(test,
                          id.vars = idvars,
                          measure.vars = npsvars.bin,
@@ -174,8 +157,12 @@ for (i in seq_len(nrow(transformed))) {
         ## With interaction term, it estimates separate regression coefficients for each NPS
         ## Including nps_id term allows a different intercept per nps
         ## The working correlation captures the fact that the outcomes are correlated
-        ## using jacknife for std.err is better than the default, which is
-        ## downward-biased with small sample size and will cause inflation in the Wald p-value
+        ## the default san.se method is downward-biased with small sample size and will
+        ## cause inflation in the Wald p-value, but use it here for speed and we will
+        ## replace that estimate with the one using CR2 bias-reduced sandwich covariates
+        ##
+        ## There will be 14 coefficients --
+        ## intercept, 6 NPS main effects, 7 protein:NPS interaction effects
         gee_fit_int <- geeglm(update.formula(as.formula(modelform("outcome")),
                                              . ~ . -protein + nps_id + protein:nps_id),
                               id      = protsample,  # clustered by protsample
@@ -288,7 +275,10 @@ setcolorder(summstats, "p.rank")
 n.na <- sum(is.na(summstats$P))
 titleqq <- paste0(fileid, "\n", "N=", nrow(phenos))
 if(n.na > 0) { titleqq <- paste0(titleqq, "; excluding ", n.na, " proteins with NA P-value") }
-qqplot <- qqunif.plot(summstats[!is.na(P), P], maintitle=titleqq)
+forqq <- summstats[!is.na(P), P] # get non-NA p-values
+forqq[which(forqq == 0)] <- 1e-300  # make non-zero so qqplot works
+
+qqplot <- qqunif.plot(forqq, maintitle=titleqq)
 
 
 ### Make log table 1 - basic count stats

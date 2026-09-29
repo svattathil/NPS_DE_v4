@@ -8,9 +8,9 @@ rm(list=ls())
 ### Constants
 options(stringsAsFactors = FALSE)
 source("1_Code/project_constants.r")
+residsets <- c("resid2_multi", "noProtect", "ignoreSVs", "regressSVs")
 covars <- c("msex", "Batch", "pmi", "age_death")
 
-residsets <- c("resid2_multi", "noProtect", "ignoreSVs", "regressSVs")
 
 ###### FUNCTIONS ######
 source("~/comsv/Svattathil_Library/svattathil_functions.r")
@@ -20,27 +20,33 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 ### Command line arguments
 ## Create parser
 parser <- ArgumentParser()
-parser$add_argument("--cohort", type="character", default = "OHSU", help="OHSU, rush, or emory")
+parser$add_argument("--cohort", type="character", default = "emory", help="OHSU, rush, or emory")
+parser$add_argument("--useSVs", action="store_true", default=FALSE, help="")
+
 
 ## Read from parser
 args <- parser$parse_args()
 
 
 ### Files that exist
+## general and cohort-specific files
 infiles <- list(
     log2norm = "2_Pipeline/01-Explore_data/prot.pcafiltered.log2norm.txt",
-    phenos   = paste0("2_Pipeline/01-Explore_data/phenos_cleaned_", args$cohort, ".txt")
+    phenos   = paste0("2_Pipeline/02-Prepare_analysis_data/phenos_cleaned_SVs_",
+                      args$cohort, ".txt")
 )
+
+## resid-specific and cohort-specific files
 for(x in residsets) {
-        infiles[[x]]    = Residfile(x, args$cohort)
+    infiles[[x]] = Residfile(x, args$cohort)
 }
 
 
 ### Files to be created
 outdir <- paste0("2_Pipeline/02-Prepare_analysis_data/Plots_varpart/")
 MyMkdir(outdir)
-fileid <- paste0(args$cohort)
-out.varpart <- paste0(outdir, "varpart_", fileid, ".pdf")
+fileid <- ifelse(args$useSVs, paste0(args$cohort, "_SVs"), args$cohort)
+outfiles <- list(pdf = paste0(outdir, "varpart_", fileid, ".pdf"))
 
 
 ###### MAIN ######
@@ -74,34 +80,49 @@ for(residset in residsets) {
 rm(residset)
 
 ## Prepare phenos for varpart
-varpartphenos <- phenos[, c(npsvars.bin, covars), with=FALSE]
+svcols <- grep("SV", names(phenos), value = TRUE)
+varpartphenos <- phenos[, c(npsvars.bin, covars, svcols), with=FALSE]
 varpartphenos[, Batch := paste0("Batch", Batch)]
 setDF(varpartphenos)
 rownames(varpartphenos) <- phenos$protsample
 
-varpart.formula1 <- paste0("~", paste0(c(npsvars.bin, covars), collapse="+"))
-vpres.log2norm <- fitExtractVarPartModel(log2norm[, !c("protein")], varpart.formula1, varpartphenos)
 
+### Define formula
+varpart.formula1 <- paste0("~", paste0(c(npsvars.bin, covars), collapse="+"))
+if(args$useSVs) {
+    varpart.formula1 <- paste0(varpart.formula1, "+", paste0(svcols, collapse="+"))
+}
+
+
+### Extract variance partition
+vpres.log2norm <- fitExtractVarPartModel(log2norm[, !c("protein")],
+                                         varpart.formula1, varpartphenos)
 
 vpres.resid.list <- sapply(residsets, function(x) {
     fitExtractVarPartModel(resid_list[[x]][, !c("protein")], varpart.formula1, varpartphenos)
 }, simplify = FALSE)
 
 
+### Make plots
 p0 <- plotVarPart(vpres.log2norm, main = "Log2norm (Data before regressing anything)")
 p1 <- plotVarPart(vpres.resid.list[[1]], main = paste0("Residset = ", residsets[[1]]))
 p2 <- plotVarPart(vpres.resid.list[[2]], main = paste0("Residset = ", residsets[[2]]))
 p3 <- plotVarPart(vpres.resid.list[[3]], main = paste0("Residset = ", residsets[[3]]))
 p4 <- plotVarPart(vpres.resid.list[[4]], main = paste0("Residset = ", residsets[[4]]))
 
-## Draw variance partition plots
+
+### Draw plots to file
 ## for some reason quote/marrangeGrob complained when I put
 ## args$cohort and args$nps directly in the paste
+width <- ifelse(args$useSVs, 26, 20)
+height <- 16
 acohort <- args$cohort
 
+forprint <- marrangeGrob(grobs = list(p0, p1, p2, p3, p4),
+                         layout_matrix = matrix(c(1:3, NA, 4:5), byrow = TRUE, nrow = 2),
+                         top=quote(paste(acohort)))
 
-forprint <- marrangeGrob(list(p0, NA, p1, p3, p2, p4), ncol=3, nrow=2, top=quote(paste(acohort)))
-ggsave(plot=forprint, filename=out.varpart, width=20, height=16)
+ggsave(plot=forprint, filename=outfiles$pdf, width=width, height=height)
 
 
 ###### FINISH ######
