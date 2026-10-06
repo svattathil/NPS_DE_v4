@@ -6,24 +6,24 @@
 message("=== Joint model")
 ### The test requires complete data for all NPS
 complete_nps <- pdat[, Reduce(`&`, lapply(.SD, function(v) !is.na(v))),
-                     .SDcols = npsvars]
+                     .SDcols = npsvars.bin]
 sub_j     <- pdat[complete_nps]
 samples_j <- sub_j[[sample_id_col]]
-message("Samples with complete data on all ", length(npsvars),
+message("Samples with complete data on all ", length(npsvars.bin),
         " domains: ", length(samples_j))
 
 ### Get some info
-case_counts <- vapply(as.character(npsvars), function(d) sum(sub_j[[d]]), numeric(1))
-print(data.table(domain = npsvars,
+case_counts <- vapply(as.character(npsvars.bin), function(d) sum(sub_j[[d]]), numeric(1))
+print(data.table(domain = npsvars.bin,
                  n_cases = case_counts,
                  n_controls = length(samples_j) - case_counts))
 
 ### Estimate SVs and define model
 edat_j   <- expr[, samples_j, drop = FALSE]
-sv_j     <- Estimate_svs(npsvars, sub_j, samples_j)
-design_j <- Build_design(npsvars, covars, sub_j, samples_j, sv_j)
+sv_j     <- Estimate_svs(npsvars.bin, sub_j, samples_j)
+design_j <- Build_design(npsvars.bin, covars, sub_j, samples_j, sv_j)
 
-nps_coefs <- intersect(make.names(npsvars), colnames(design_j))
+nps_coefs <- intersect(make.names(npsvars.bin), colnames(design_j))
 message("NPS coefficients in joint model: ",
         paste(nps_coefs, collapse = ", "))
 

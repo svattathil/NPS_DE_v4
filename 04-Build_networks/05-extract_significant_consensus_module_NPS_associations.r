@@ -29,13 +29,15 @@ args <- parser$parse_args()
 
 
 ### Files that exist
-indir <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/Auto_softpower", args$auto_softpower, "/")
+indir <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/Auto_softpower",
+                args$auto_softpower, "/")
 infiles <- list(specific = paste0(indir, "nps_regression_results_per-cohort.txt"),
                 meta     = paste0(indir, "nps_regression_results_meta.txt"))
 
 
 ### Files to be created
-outfiles <- list(sig = paste0(indir, "nps_regression_sig_auto_softpower", args$auto_softpower, ".txt"))
+outfiles <- list(sig = paste0(indir, "nps_regression_sig_auto_softpower",
+                              args$auto_softpower, ".txt"))
 
 
 ###### MAIN ######
@@ -49,9 +51,12 @@ dats[["specific"]][, module := gsub("ME", "", eigengene)]
 setnames(dats[["specific"]], "Std.Err", "SE")
 
 
+## Add cohort column to meta results
+dats[["meta"]][, cohort := "meta-analysis"]
+
 ### Combine significant results into one table
-merge_cols <- c("module", "NPS")
-spec_cols  <- c("cohort", "Estimate", "SE", "Pvalue")
+merge_cols <- c("module", "NPS", "cohort")
+spec_cols  <- c("Estimate", "SE", "Pvalue")
 meta_cols  <- c("fe_p", "fe_beta", "fe_se")
 
 merged_sig <- merge(dats[["specific"]][Pvalue < 0.05, c(merge_cols, spec_cols), with = FALSE],

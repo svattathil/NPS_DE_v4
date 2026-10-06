@@ -30,28 +30,27 @@ DomainCounts <- function(longtest) {
 ## Create parser
 parser <- ArgumentParser()
 parser$add_argument("--cohort", type="character", default = "OHSU")
-parser$add_argument("--residset", type="character",
-                    help="regressSVs or ignoreSVs or resid2_multi or noProtect", default = "ignoreSVs")
 
 ## Read from parser
 args <- parser$parse_args()
 
 
 ### Files that exist
-indir <- "2_Pipeline/02-Prepare_analysis_data/"
-infiles <- list(phenos = paste0(indir, "phenos_cleaned_SVs_", args$cohort, ".txt"),
-                resid        = Residfile(args$residset, args$cohort)
+indir <- "2_Pipeline/04-Build_networks/Wgcna_out/Consensus/Auto_softpower9/"
+infiles <- list(phenos = paste0("2_Pipeline/02-Prepare_analysis_data/phenos_cleaned_SVs_",
+                                args$cohort, ".txt"),
+                eigen  = paste0(indir, "auto_softpower9_", args$cohort, "_eigengenes.txt")
                 )
 
+
 ### Files to be created
-outdir <- paste0("2_Pipeline/03-Run_regressions/Prot_multivar/Using_",
-                 Capwords(args$residset), "/")
+outdir <- paste0(indir, "Multivariate/")
 MyMkdir(outdir)
 
 outdir.mvmeta <- paste0(outdir, "Mvmeta/In/")
 MyMkdir(outdir.mvmeta)
 
-fileid <- paste0("prot_multivar_", args$residset, "_", args$cohort)
+fileid <- paste0("eigengene_multivar_", args$cohort)
 
 outfiles <- list(
     summstats     = paste0(outdir, fileid, "_regression_stats.txt"),
@@ -64,69 +63,67 @@ outfiles <- list(
 
 ###### MAIN ######
 #### Read in data ####
-resid.all <- fread(infiles$resid)
+eigen.all <- fread(infiles$eigen)
 phenos.all <- fread(infiles$phenos)
 
 
 ### Define model and model family
 ## For multivariate, we need to run for each NPS in turn
 ## so the modelform is a function
-modelform <- function(currnps) { paste0(currnps, " ~ protein") }
+modelform <- function(currnps) { paste0(currnps, " ~ eigengene") }
 
 
 #### Prepare data ####
 ### Filter samples
-## Restrict phenos to samples in resid data (because they did different filtering)
-phenos.all <- phenos.all[protsample %in% colnames(resid.all), ]
+## Restrict phenos to samples in eigengene data (in case they did different filtering)
+phenos.all <- phenos.all[protsample %in% eigen.all$protsample, ]
 
 
 ## ## Restrict phenos columns to phenotypes that will be used for analysis
 representative_formula <- as.formula(modelform("agit"))
-allvars <- setdiff(unique(c(npsvars.bin, all.vars(representative_formula))), "protein")
+allvars <- setdiff(unique(c(npsvars.bin, all.vars(representative_formula))), "eigengene")
 phenos <- phenos.all[, c("protsample", allvars), with = FALSE]
 
 
-## Restrict resid to samples in phenos and convert to matrix
-resid <- as.matrix(resid.all[, phenos.all$protsample, with = FALSE])
-rownames(resid) <- resid.all$protein
+## Restrict eigen to samples in phenos and convert to matrix
+setkey(eigen.all, protsample)
+modcols <- setdiff(names(eigen.all), c("protsample", "MEgrey"))
 
-
-### Select proteins with data for at least 50 participants
-tokeep <- apply(resid, 1, function(x) {sum(!is.na(x)) > 50 })
-for_transformation <- resid[tokeep, ]
-rm(tokeep)
+eigen <- t(as.matrix(eigen.all[phenos.all$protsample, ..modcols]))
+rownames(eigen) <- modcols
+colnames(eigen) <- phenos.all$protsample
 
 
 ### Z-scale
-print("Z-scaling data for each protein")
-transformed <- t(apply(for_transformation, 1, scale))
-rownames(transformed) <- rownames(for_transformation)
-colnames(transformed) <- colnames(for_transformation)
+print("Z-scaling data for each eigengene")
+transformed <- t(apply(eigen, 1, scale))
+rownames(transformed) <- rownames(eigen)
+colnames(transformed) <- colnames(eigen)
 
 
 ### Iinitialize objects to hold results, and also coefficients and covariance matrices,
 ### which are necessary to run meta-analysis across cohorts
 beta_vectors <- covariance_mats <- as.list(rep(NA, nrow(transformed)))   # initialize with NA
-names(beta_vectors) <- names(covariance_mats) <- rownames(transformed)   # add protein names
+names(beta_vectors) <- names(covariance_mats) <- rownames(transformed)   # add eigengene names
 results_list <- vector("list", nrow(transformed))
 
 
-### Run regression for each protein in turn
-print("Starting regressions for each protein")
+### Run regression for each eigengene in turn
+print("Starting regressions for each eigengene")
 ## Set seed in case multivariate has some random function
 set.seed(24983423)
 
 for (i in seq_len(nrow(transformed))) {
-    if (i %% 1000 == 0) { print(paste0(pN(i), " of ", pN(nrow(transformed)))) }
+    if (i %% 5 == 0) { print(paste0(pN(i), " of ", pN(nrow(transformed)))) }
 
-    protein_name <- rownames(transformed)[i]
+    eigengene_name <- rownames(transformed)[i]
     domain_counts <- NA_character_   # populated inside tryCatch once longtest exists
 
     fit_result <- tryCatch({
         ### 1. Set up data
-        ## Initiate test data for this protein (z-scaled residuals and sample ID)
+        ## Initiate test data for this eigengene (z-scaled residuals and sample ID)
         test <- data.frame(
-            protein = unlist(transformed[i, ]),
+            eigengene = unlist(transformed[i, ]),
             protsample = colnames(transformed))
 
         ## Add phenos to test data
@@ -162,9 +159,9 @@ for (i in seq_len(nrow(transformed))) {
         ## replace that estimate with the one using CR2 bias-reduced sandwich covariates
         ##
         ## There will be 14 coefficients --
-        ## intercept, 6 NPS main effects, 7 protein:NPS interaction effects
+        ## intercept, 6 NPS main effects, 7 eigengene:NPS interaction effects
         gee_fit_int <- geeglm(update.formula(as.formula(modelform("outcome")),
-                                             . ~ . -protein + nps_id + protein:nps_id),
+                                             . ~ . -eigengene + nps_id + eigengene:nps_id),
                               id      = protsample,  # clustered by protsample
                               waves   = wave,        # used if "unstructured" corr structure
                               data    = longtest,
@@ -176,15 +173,15 @@ for (i in seq_len(nrow(transformed))) {
         ## singular-matrix error out of linearHypothesis
         if (anyNA(coef(gee_fit_int))) {
             stop("Aliased coefficient(s) in GEE fit (likely a constant/near-constant ",
-                 "NPS domain for this protein): ",
+                 "NPS domain for this eigengene): ",
                  paste(names(coef(gee_fit_int))[is.na(coef(gee_fit_int))], collapse = ", "))
         }
 
-        ### 3. Extract coefficients for the interaction terms (protein:nps_id)
+        ### 3. Extract coefficients for the interaction terms (eigengene:nps_id)
         coef_vec <- coef(gee_fit_int)
-        prot_terms <- grep("protein", names(coef_vec), value = TRUE)
+        prot_terms <- grep("eigengene", names(coef_vec), value = TRUE)
         beta_prot  <- coef_vec[prot_terms]   # length = n.nps
-        names(beta_prot) <- sub(":protein", "", sub("nps_id", "", prot_terms))   # rename
+        names(beta_prot) <- sub(":eigengene", "", sub("nps_id", "", prot_terms))   # rename
 
         ### 4. Extract covariance matrix for *all* coefficients
         ## CR2 (bias-reduced) sandwich covariance — recomputed from residuals,
@@ -194,15 +191,15 @@ for (i in seq_len(nrow(transformed))) {
                                     cluster = longtest$protsample,
                                     type    = "CR2")
 
-        ## Subset to the protein‑by‑NPS block
-        ## V_prot is the sampling-error covariance matrix for the per-domain protein coefficients
+        ## Subset to the eigengene‑by‑NPS block
+        ## V_prot is the sampling-error covariance matrix for the per-domain eigengene coefficients
         ## It accounts for the correlation among the outcomes through the GEE working correlation,
         ## and for any over-dispersion via the robust sandwich estimator
         V_prot <- V_full[prot_terms, prot_terms]   # n.nps x n.nps
 
 
         ### 5. Do joint hypothesis test with Wald test
-        ## Small-sample-corrected joint test of the 7 protein:nps_id terms,
+        ## Small-sample-corrected joint test of the 7 eigengene:nps_id terms,
         ## using Hotelling-Thurston-Zhang (HTZ) F-test with adjusted df
         ## instead of a chi-square Wald test assuming K -> infinity
         wald_i <- clubSandwich::Wald_test(gee_fit_int,
@@ -229,7 +226,7 @@ for (i in seq_len(nrow(transformed))) {
     covariance_mats[[i]]   <- fit_result$V
 
     results_list[[i]] <- list(
-        protein       = protein_name,
+        eigengene       = eigengene_name,
         Fstat         = unname(fit_result$stats$Fstat),
         P             = unname(fit_result$stats$p_val),
         nobs          = unname(fit_result$stats$nobs),
@@ -241,25 +238,18 @@ for (i in seq_len(nrow(transformed))) {
 n.errors <- sum(!sapply(results_list, function(x) is.na(x$error)))
 if (n.errors > 0) {
     print(paste0(pN(n.errors), " of ", pN(nrow(transformed)),
-                 " proteins failed and were skipped (see 'error' column in output)."))
+                 " eigengenes failed and were skipped (see 'error' column in output)."))
 }
 
 
 summstats <- rbindlist(lapply(results_list, as.data.table), fill = TRUE)
-setcolorder(summstats, "protein")
+setcolorder(summstats, "eigengene")
 
 
-### Add columns for qvalue
-## qvalue() errors on NA input, so compute only on proteins with a valid P;
-## failed proteins (see 'error' column) keep NA for qvalue/lfdr/etc.
-summstats[!is.na(P), c("qvalue", "lfdr") := {
-    qobj <- qvalue(P)
-    list(qobj$qvalues, qobj$lfdr)
-}]
+### Add columns for multiple testing adjustment
 summstats[, P.BH := p.adjust(P, method="BH")]
 summstats[, P.bonf := p.adjust(P, method="bonferroni")]
-summstats[, sig.qvalue05 := ifelse(qvalue < 0.05, TRUE, FALSE)]
-summstats[, sig := ifelse(qvalue < 0.05, "sig", NA_character_)] ## for easy grepping
+summstats[, sig.nominal05 := ifelse(P < 0.05, "sig", NA_character_)] ## for easy grepping
 
 
 ### Sort by p-value
@@ -274,7 +264,7 @@ setcolorder(summstats, "p.rank")
 ### Draw qq plot
 n.na <- sum(is.na(summstats$P))
 titleqq <- paste0(fileid, "\n", "N=", nrow(phenos))
-if(n.na > 0) { titleqq <- paste0(titleqq, "; excluding ", n.na, " proteins with NA P-value") }
+if(n.na > 0) { titleqq <- paste0(titleqq, "; excluding ", n.na, " eigengenes with NA P-value") }
 forqq <- summstats[!is.na(P), P] # get non-NA p-values
 forqq[which(forqq == 0)] <- 1e-300  # make non-zero so qqplot works
 
@@ -285,8 +275,8 @@ qqplot <- qqunif.plot(forqq, maintitle=titleqq)
 logtab <- data.table(cohort            = args$cohort,
                      NPS               = args$nps,
                      model             = paste0(deparse(modelform), collapse = ""),
-                     n.proteins.tested = nrow(transformed),
-                     n.sig.qvalue05    = sum(summstats$sig.qvalue05, na.rm=TRUE))
+                     n.eigengenes.tested = nrow(transformed),
+                     n.sig.nominal05    = sum(summstats$sig.nominal05 == "sig", na.rm=TRUE))
 
 
 

@@ -35,7 +35,7 @@ parser <- ArgumentParser(description = "limma DE of log2 protein abundance on NP
 
 ## Control model and sample set
 parser$add_argument("--run", default = "basic",
-                    help = "Specify the run (basic, severity, males, females, e4_adj, latfactor)")
+                    help = "Specify the run (basic, noSV, severity, males, females, e4_adj, latfactor)")
 parser$add_argument("--cohort", default = "OHSU",
                     help = "Cohort label used in output file names.")
 ## Control limma
@@ -117,13 +117,16 @@ if(args$run == "latfactor") {
     }
 }
 
+
+## useSV or no?
+useSV <- ifelse(args$run %in% c("noSV"), FALSE, TRUE)
+
 ## min non-missing donors to keep protein in analysis
 mincount <- ifelse(args$run %in% c("males", "females"), 25, 50)
 
-
 ## covars for this run
 ## SVs will be added on the fly
-if(args$run %in% c("basic", "severity", "latfactor")) {
+if(args$run %in% c("basic", "noSV", "severity", "latfactor")) {
     covars <- c("Batch", "pmi", "age_death", "msex")
     fac_covars <- c("Batch")
 }
@@ -228,7 +231,6 @@ per_domain <- diag_list <- qq_list <- vector("list", length(predictors))
 names(per_domain) <- names(diag_list) <- names(qq_list) <- predictors
 
 
-
 ### Run for each domain in turn
 for (dom in predictors) {
     ## Prepare data
@@ -239,7 +241,13 @@ for (dom in predictors) {
     edat <- expr[, samples, drop = FALSE]
 
     ## Estimate SVs and define model
-    sv     <- Estimate_svs(protected_vars = dom, pheno_dt = sub_pdat, sample_ids = samples)
+    if(useSV) {
+        sv <- Estimate_svs(protected_vars = dom, pheno_dt = sub_pdat, sample_ids = samples)
+    } else {
+        message("Running without SVs. ")
+        sv <- NULL
+    }
+
     design <- Build_design(predictors = dom, covariates = covars,
                            pheno_dt = sub_pdat, sample_ids = samples, svs = sv)
 

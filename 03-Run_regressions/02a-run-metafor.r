@@ -23,7 +23,7 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 ### Command line arguments
 ## Create parser
 parser <- ArgumentParser()
-parser$add_argument("--run", type="character", default="basic", help = "basic or cond_ind")
+parser$add_argument("--run", type="character", default="basic", help = "basic, nSV, or cond_ind")
 parser$add_argument("--SE_type", type="character", default="SE_mod", help = "SE_mod or SE_unmod")
 
 
@@ -31,7 +31,7 @@ parser$add_argument("--SE_type", type="character", default="SE_mod", help = "SE_
 args <- parser$parse_args()
 
 ## Define outcomes and subset of cohorts (if necessary)
-if(args$run %in% c("basic", "cond_ind",  "e4_adj")) {
+if(args$run %in% c("basic", "noSV", "cond_ind",  "e4_adj")) {
     npsvars <- npsvars.bin
 }
 

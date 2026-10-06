@@ -60,6 +60,12 @@ run_limma_script01 basic
 Rscript $scriptdir/02a-run-metafor.r --run basic
 Rscript $scriptdir/aggregate_stats_to_excel.r --run basic
 
+## NoSV model
+run_limma_script01 noSV
+Rscript $scriptdir/02a-run-metafor.r --run noSV
+Rscript $scriptdir/aggregate_stats_to_excel.r --run noSV
+
+
 
 ## Sensitivity - Severity
 run_limma_script01 severity OHSU emory

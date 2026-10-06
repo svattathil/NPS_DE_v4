@@ -8,7 +8,7 @@ rm(list = ls())
 
 
 ###### GOAL ######
-
+# Make table summarizing module eigengene associations to use as main table in manuscript
 
 
 ##### CONSTANTS #####
@@ -22,6 +22,8 @@ setkey(nps_map, nps)
 ###### FUNCTIONS ######
 source("~/comsv/Svattathil_Library/svattathil_functions.r")
 
+MergeRes <- function(alist) { Reduce(function(x, y) {
+    merge(x, y, by = "module", all = TRUE) }, alist) }
 
 ###### SETUP ######
 
@@ -42,8 +44,10 @@ infiles[["sig_latfac"]] <- sapply(cohorts, function(acohort) {
 
 infiles[["manual_order"]] <- "0_Data/module_manual_order.txt"
 infiles[["multi"]] <- sapply(cohorts, function(acohort) {
-    paste0(indir, "Regressions_multivariate/",
-           inpref, "_", acohort, "_regression_multivariate.txt") })
+    paste0(indir, "Multivariate/",
+           "eigengene_multivar", "_", acohort, "_regression_stats.txt") })
+
+infiles[["mvmeta"]] <- paste0(indir, "Multivariate/Mvmeta/Out/wald_results.txt")
 
 
 ### Files to be created
@@ -79,7 +83,8 @@ Readsheets <- function() {
 res_enrichment <- Readsheets()
 
 sig_latfac_list <- sapply(infiles[["sig_latfac"]], fread, simplify = FALSE)
-#sig_multi_list <- sapply(infiles[["multi"]], fread, simplify = FALSE)
+sig_multi_list <- sapply(infiles[["multi"]], fread, simplify = FALSE)
+mvmeta_allres <- fread(infiles[["mvmeta"]])
 manual_order <- fread(infiles[["manual_order"]])
 
 
@@ -114,7 +119,7 @@ forbind[["top_hub_genes"]] <- kme[kME_avg > 0.7,
 
 
 ### Prepare associations
-## First get per-cohort NPS associations
+### First get per-cohort NPS associations
 setnames(sig_nps, "NPS", "nps")
 sig_nps <- merge(sig_nps, nps_map, by = "nps")
 
@@ -129,10 +134,10 @@ sigstrings_by_cohort[["nps"]] <-
     }, simplify = FALSE)
 
 
-## Then get per-cohort latent factor associations
-## rename MR1 to Factor 1, MR2 to Factor 2, etc.
+### Then get per-cohort latent factor associations
+## rename f1 to latent factor 1
 sigstrings_by_cohort[["factor"]] <- sapply(cohorts, function(acohort) {
-    sig_latfac_list[[acohort]][, latentfactor_sig05 := gsub("MR",
+    sig_latfac_list[[acohort]][, latentfactor_sig05 := gsub("f",
                                                             "latent factor ",
                                                             latentfactor_sig05)]
     sig_latfac_list[[acohort]][, cohort := acohort]
@@ -146,8 +151,7 @@ sigstrings_by_cohort[["factor"]] <- sapply(cohorts, function(acohort) {
 }, simplify = FALSE)
 
 
-## Then get per-cohort multivariate associations
-if(0) {
+### Then get per-cohort multivariate associations
 sigstrings_by_cohort[["multi"]]<- sapply(cohorts, function(acohort) {
     sig_multi_list[[acohort]][, module := gsub("ME", "", eigengene)]
     sigres <- sig_multi_list[[acohort]][P < .05, .(module,
@@ -155,16 +159,13 @@ sigstrings_by_cohort[["multi"]]<- sapply(cohorts, function(acohort) {
     setnames(sigres, "sig_multi", paste0("sig_multi_", acohort))
     return(sigres)
 }, simplify = FALSE)
-}
 
-MergeRes <- function(alist) { Reduce(function(x, y) {
-    merge(x, y, by = "module", all = TRUE) }, alist) }
 
-## Flatten to one table per outcome
+### Flatten per-cohort results
+## to one table per outcome
 sigstrings_by_outcome <- sapply(sigstrings_by_cohort, MergeRes, simplify = FALSE)
 
-
-## Flatten to one table with a column per cohort*outcome
+## to one table with a column per cohort*outcome
 sigstrings_assoc <- MergeRes(sigstrings_by_outcome)
 
 ## Make columns with all sig outcomes per cohort
@@ -183,29 +184,52 @@ sigstrings_assoc[, assoc_emory := apply(.SD, 1, function(x) {
 forbind[["assoc"]] <- sigstrings_assoc[, .(module, assoc_OHSU,
                                            assoc_rush, assoc_emory)]
 
-
 ## Merge into single table
 forprint <- MergeRes(forbind)
 
 
-## Add meta-analysis associations
-forbind[["meta"]] <- sig_nps[fe_p < 0.05, paste0(nps_text, collapse = ", "),
+### Assemble meta-analysis associations
+## from per-domain tests
+sig_meta_perdomain <- sig_nps[fe_p < 0.05, paste0(nps_text, collapse = ", "),
                              by = "module"]
-setnames(forbind[["meta"]], "V1", "assoc_meta")
+setnames(sig_meta_perdomain, "V1", "domains")
 
+
+## from mvmeta on multivariate results
+mvmeta_allres[, module := gsub("ME", "", eigengene)]
+setkey(mvmeta_allres, module)
+sig_mvmeta <- mvmeta_allres[sig.nominal05 == "sig", ]
+sig_mvmeta[, multivariate := "multivariate"]
+forbind[["meta"]] <- merge(sig_meta_perdomain, sig_mvmeta[, .(module, multivariate)],
+                           by = "module", all = TRUE)
+
+## make combined string of outcomes
+CombineStrings <- function(x, y) {
+    if(is.na(x)) { return(y) }
+    if(is.na(y)) { return(x) }
+    paste0(x, ", ", y)
+}
+
+forbind[["meta"]][, assoc_meta := mapply(CombineStrings, domains, multivariate)]
+forbind[["meta"]][, c("domains", "multivariate") := NULL]
+
+### Combine meta-analysis and per-cohort results
 forprint <- merge(forprint, forbind[["meta"]], by = "module", all = TRUE)
 
 
+### Make it pretty
 ## order using my manual order
 forprint <- merge(manual_order, forprint, by = "module", all = TRUE)
 setorder(forprint, manual_order, na.last = TRUE)
 
+## Edit case
+## Use sentence case for description
+## Then fix because sentence case messes up 'mRNA'
+forprint[, Description := str_to_sentence(Description)]
+forprint[, Description := gsub("Mrna", "mRNA", Description)]
 
-### Edit case
-forprint[, Description := str_to_sentence(Description)]       ## Use sentence case for description
-forprint[, Description := gsub("Mrna", "mRNA", Description)]  ## fix because sentence case messed up mRNA
-
-setcolorder(forprint, c("manual_order", "ID", "module", "Description", "hub_genes", "top_hub_genes"))
+setcolorder(forprint, c("manual_order", "ID", "module",
+                        "Description", "hub_genes", "top_hub_genes"))
 
 
 ###### FINISH ######
