@@ -31,7 +31,8 @@ DomainCounts <- function(longtest) {
 parser <- ArgumentParser()
 parser$add_argument("--cohort", type="character", default = "OHSU")
 parser$add_argument("--residset", type="character",
-                    help="regressSVs or ignoreSVs or resid2_multi or noProtect", default = "ignoreSVs")
+                    help="regressSVs or ignoreSVs or resid2_multi or noProtect",
+                    default = "ignoreSVs")
 
 ## Read from parser
 args <- parser$parse_args()
@@ -111,6 +112,13 @@ names(beta_vectors) <- names(covariance_mats) <- rownames(transformed)   # add p
 results_list <- vector("list", nrow(transformed))
 
 
+
+### Define model form for GEE
+geeglm_modelform <- update.formula(as.formula(modelform("outcome")),
+                                             . ~ . -protein + nps_id + protein:nps_id)
+print(paste0("Model for geeglm: ", paste(deparse(geeglm_modelform), collapse = "")))
+
+
 ### Run regression for each protein in turn
 print("Starting regressions for each protein")
 ## Set seed in case multivariate has some random function
@@ -147,6 +155,10 @@ for (i in seq_len(nrow(transformed))) {
         setDT(longtest)
         longtest[, protsample := factor(protsample)]
         longtest[, nps_id := factor(nps_id)]
+
+        ## Add wave column, which is just the integer version of nps_id
+        ## This is used for unstructured correlation -- each person is a cluster,
+        ## and wave defines each NPS's position within the cluster
         longtest[, wave := as.integer(nps_id)]
         setorder(longtest, protsample, wave)
 
@@ -163,8 +175,9 @@ for (i in seq_len(nrow(transformed))) {
         ##
         ## There will be 14 coefficients --
         ## intercept, 6 NPS main effects, 7 protein:NPS interaction effects
-        gee_fit_int <- geeglm(update.formula(as.formula(modelform("outcome")),
-                                             . ~ . -protein + nps_id + protein:nps_id),
+
+
+        gee_fit_int <- geeglm(geeglm_modelform,
                               id      = protsample,  # clustered by protsample
                               waves   = wave,        # used if "unstructured" corr structure
                               data    = longtest,
@@ -186,11 +199,12 @@ for (i in seq_len(nrow(transformed))) {
         beta_prot  <- coef_vec[prot_terms]   # length = n.nps
         names(beta_prot) <- sub(":protein", "", sub("nps_id", "", prot_terms))   # rename
 
+
         ### 4. Extract covariance matrix for *all* coefficients
         ## CR2 (bias-reduced) sandwich covariance — recomputed from residuals,
         ## independent of whatever std.err= was set in geeglm()
         V_full <- clubSandwich::vcovCR(
-                                    gee_fit_int,     # square matrix (dim = #coeffs)
+                                    gee_fit_int,
                                     cluster = longtest$protsample,
                                     type    = "CR2")
 
@@ -212,29 +226,35 @@ for (i in seq_len(nrow(transformed))) {
                      test        = "HTZ")
 
 
-        ## Extract summary statistics
-        n <- length(unique(gee_fit_int$id))
-        stats_i <- data.frame(wald_i, nobs = n)
 
-        list(beta = beta_prot, V = V_prot, stats = wald_i, error = NA_character_)
+        ### 6. Gather stats to return (or fill null values if fitting failed)
+        list(beta        = beta_prot,
+             V           = V_prot,
+             df.residual = gee_fit_int$df.residual,
+             stats = wald_i,
+             error = NA_character_)
 
     }, error = function(e) {
-        list(beta = NA, V = NA,
+        list(beta        = NA,
+             V           = NA,
+             df.residual = NA,
              stats = data.frame(test = NA_character_, Fstat = NA_real_, df_num = NA_integer_,
                        df_denom = NA_real_, pval = NA_real_, sig = NA_real_),
              error = conditionMessage(e))
     })
 
+    ### Store results to list
     beta_vectors[[i]]      <- fit_result$beta
     covariance_mats[[i]]   <- fit_result$V
 
     results_list[[i]] <- list(
-        protein       = protein_name,
-        Fstat         = unname(fit_result$stats$Fstat),
-        P             = unname(fit_result$stats$p_val),
-        nobs          = unname(fit_result$stats$nobs),
-        error         = fit_result$error,
-        domain_counts = domain_counts
+        protein         = protein_name,
+        gee.df.residual = unname(fit_result$df.residual),
+        Fstat           = unname(fit_result$stats$Fstat),
+        P               = unname(fit_result$stats$p_val),
+        nobs            = unname(fit_result$stats$nobs),
+        error           = fit_result$error,
+        domain_counts   = domain_counts
     )
 }
 
@@ -276,7 +296,10 @@ n.na <- sum(is.na(summstats$P))
 titleqq <- paste0(fileid, "\n", "N=", nrow(phenos))
 if(n.na > 0) { titleqq <- paste0(titleqq, "; excluding ", n.na, " proteins with NA P-value") }
 forqq <- summstats[!is.na(P), P] # get non-NA p-values
-forqq[which(forqq == 0)] <- 1e-300  # make non-zero so qqplot works
+p_zeroes <- which(forqq == 0) ## some p-values may be 0 -- identify them
+forqq[p_zeroes] <- 1e-300  # make non-zero so qqplot works
+
+print(paste0("Note: replaced ", length(p_zeroes), " p-values with 1e-300 to allow QQ plotting."))
 
 qqplot <- qqunif.plot(forqq, maintitle=titleqq)
 
@@ -284,7 +307,7 @@ qqplot <- qqunif.plot(forqq, maintitle=titleqq)
 ### Make log table 1 - basic count stats
 logtab <- data.table(cohort            = args$cohort,
                      NPS               = args$nps,
-                     model             = paste0(deparse(modelform), collapse = ""),
+                     model             = paste0(deparse(geeglm_modelform), collapse = ""),
                      n.proteins.tested = nrow(transformed),
                      n.sig.qvalue05    = sum(summstats$sig.qvalue05, na.rm=TRUE))
 
