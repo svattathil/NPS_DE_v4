@@ -2,9 +2,9 @@
 #SBATCH --job-name=wrapper03_2
 #SBATCH --nodes=1
 #SBATCH --mem=16G
-#SBATCH --array=3,6,9
+#SBATCH --array=1-2
 #SBATCH --cpus-per-task=1
-#SBATCH --time=0-10:00:00 
+#SBATCH --time=0-5:00:00 
 #SBATCH --output=Slurmout/%x-%A_%a.o
 #SBATCH --error=Slurmout/%x-%A_%a.e
 #SBATCH --chdir=.
@@ -27,49 +27,26 @@ case $SLURM_ARRAY_TASK_ID in
 	cohort=OHSU
         ;;
     2)
-        residset=noProtect
-	cohort=OHSU
-        ;;
-    3)
-        residset=resid2_multi
-	cohort=OHSU
-        ;;
-    4)  
         residset=ignoreSVs
 	cohort=rush
+        ;;
+    3)
+        residset=ignoreSVs
+	cohort=emory
+        ;;
+    4)  
+        residset=noProtect
+	cohort=OHSU
         ;;
     5)
         residset=noProtect
 	cohort=rush
         ;;
     6)
-        residset=resid2_multi
-	cohort=rush
-        ;;
-    7)  
-        residset=ignoreSVs
-	cohort=emory
-        ;;
-    8)
         residset=noProtect
 	cohort=emory
         ;;
-    9)
-        residset=resid2_multi
-	cohort=emory
-        ;;
-    10)  
-        residset=regressSVs
-	cohort=OHSU
-        ;;
-    11)
-        residset=regressSVs
-	cohort=rush
-        ;;
-    12)
-        residset=regressSVs
-	cohort=emory
-        ;;
+    
 esac
 
 
