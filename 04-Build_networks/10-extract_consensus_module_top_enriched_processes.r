@@ -14,10 +14,7 @@ rm(list = ls())
 
 ##### CONSTANTS #####
 options(stringsAsFactors = FALSE)
-cohorts <- c("OHSU", "rush", "emory")
-npsvars.bin <- c(agitation = "agit", anxiety = "anx", apathy = "apa", delusion = "del",
-                 depression = "depd", disinhibition = "disn", hallucination = "hall",
-                 irritability = "irr", sleep = "nite")
+source("1_Code/project_constants.r")
 
 
 ###### FUNCTIONS ######
@@ -38,10 +35,10 @@ args <- parser$parse_args()
 
 ###### SETUP ######
 ### Files that exist
-dir_enrichment <- paste0("2_Pipeline/04-Build_networks/Consensus/",
-                         "Auto_softpower8/Enrichment/")
+dir_enrichment <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/",
+                         "Auto_softpower9/Enrichment/")
 infiles <- list(enrichment = paste0(dir_enrichment,
-                                    "consensus_modules_auto_softpower8_",
+                                    "consensus_modules_auto_softpower9_",
                                     "pthresh1_gene_set_enrichment.xlsx"))
 
 
@@ -50,11 +47,11 @@ infiles <- list(enrichment = paste0(dir_enrichment,
 ## Otherwise, use number of top gene sets from args$ntop
 if(args$thresh > 0) {
 outfiles <- list(summtab = paste0(dir_enrichment,
-                                      "consensus_modules_auto_softpower8_",
+                                      "consensus_modules_auto_softpower9_",
                                       "adjp", args$thresh, "_enriched_processes.txt"))
 } else {
     outfiles <- list(summtab = paste0(dir_enrichment,
-                                      "consensus_modules_auto_softpower8_",
+                                      "consensus_modules_auto_softpower9_",
                                       "top", args$ntop, "_enriched_processes.txt"))
 }
 

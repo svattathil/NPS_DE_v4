@@ -27,7 +27,7 @@ knitr::opts_chunk$set(fig.width=12, fig.height=8)
 ```
 
 ```{r constants}
-cohorts <- c("OHSU", "rush", "emory")
+source("1_Code/project_constants.r")
 
 
 ```
@@ -40,9 +40,10 @@ Mkable <- function(x, ...) { kable(x, format.args = list(big.mark = ','), ...) }
 
 
 ```{r define-input}
-indir <- "2_Pipeline/01-Explore_data/"
-files_patho <- sapply(cohorts, function(x) { paste0(indir, "patho_", x, ".txt") })
-files_main <- sapply(cohorts, function(x) { paste0(indir, "phenos_cleaned_", x, ".txt") })
+indir1 <- "2_Pipeline/01-Explore_data/"
+indir2 <- "2_Pipeline//02-Prepare_analysis_data/"
+files_patho <- sapply(cohorts, function(x) { paste0(indir1, "patho_", x, ".txt") })
+files_main <- sapply(cohorts, function(x) { paste0(indir2, "phenos_cleaned_SVs_", x, ".txt") })
 
 
 ```
