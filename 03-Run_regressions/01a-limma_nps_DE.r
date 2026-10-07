@@ -35,7 +35,8 @@ parser <- ArgumentParser(description = "limma DE of log2 protein abundance on NP
 
 ## Control model and sample set
 parser$add_argument("--run", default = "basic",
-                    help = "Specify the run (basic, noSV, severity, males, females, e4_adj, latfactor)")
+                    help = paste0("Specify the run (basic, noSV, severity, ",
+                                  "males, females, e4_adj, latfactor)"))
 parser$add_argument("--cohort", default = "OHSU",
                     help = "Cohort label used in output file names.")
 ## Control limma
@@ -150,6 +151,8 @@ e4_dat <- fread(infiles$e4_dat)
 if(args$run == "latfactor") {
     fac_scores <- fread(infiles$fac_scores)
 }
+
+
 ### Prepare data
 sample_id_col <- "protsample"
 protein_id_col <- names(prot)[1]
@@ -251,6 +254,7 @@ for (dom in predictors) {
     design <- Build_design(predictors = dom, covariates = covars,
                            pheno_dt = sub_pdat, sample_ids = samples, svs = sv)
 
+    n_model_terms <- ncol(design)
     coef_name <- make.names(dom)
     if (!coef_name %in% colnames(design)) {
         warning("Coefficient ", coef_name, " not estimable; skipping ", dom)
@@ -275,7 +279,7 @@ for (dom in predictors) {
     Annotate_result(dt = res,
                     domain = dom,
                     cohort = args$cohort,
-                    n_samples = length(samples),
+                    n_obs = fit$df.residual + ncol(design) - rowSums(is.na(fit$coefficients)),
                     n_svs = if (is.null(sv)) 0L else ncol(sv))
     setorder(res, P.Value)
 
@@ -345,7 +349,7 @@ if (!args$no_diagnostics) {
 ### Assemble summary
 summary_dt <- per_domain_dt[, .(n_proteins = .N,
                                 n_fdr05 = sum(fdr < 0.05, na.rm = TRUE),
-                                n_samples = n_samples[1],
+                                n_samples = length(samples),
                                 n_svs = n_svs[1]),
                             by = .(cohort, domain)]
 print(summary_dt)
