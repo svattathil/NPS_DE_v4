@@ -329,6 +329,9 @@ fitMeasures(efa_results_lavaan[[curr_n]], c("chisq.scaled", "df.scaled", "pvalue
 curr_n <- 1
 summary(efa_results_lavaan[[curr_n]], rotation.args = list(rotate = "oblimin"))
 
+## All loadings
+efa_results_lavaan[[curr_n]]$loadings
+
 # Overall fit indices for each candidate nfactors
 fitMeasures(efa_results_lavaan[[curr_n]], c("chisq.scaled", "df.scaled", "pvalue.scaled",
                               "cfi.scaled", "tli.scaled", "rmsea.scaled",
