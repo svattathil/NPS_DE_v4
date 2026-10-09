@@ -44,8 +44,10 @@ joint_per_domain <- lapply(nps_coefs, function(cf) {
     Annotate_result(domain = cf,
                     cohort = args$cohort,
                     model = "joint",
-                    n_samples = length(samples_j),
-                    n_svs = if (is.null(sv_j)) 0L else ncol(sv_j))
+                    n_obs     = (fit_j$df.residual + ncol(design_j) -
+                             rowSums(is.na(fit_j$coefficients))),
+                    n_svs = if (is.null(sv_j)) 0L else ncol(sv_j)
+                    )
 }) |>
 rbindlist(use.names = TRUE, fill = TRUE)
 setorder(joint_per_domain, domain, P.Value)
@@ -60,7 +62,9 @@ Annotate_result(cohort    = args$cohort,
                 model     = "joint_F",
                 n_domains = length(nps_coefs),
                 n_obs     = (fit_j$df.residual + ncol(design_j) -
-                             rowSums(is.na(fit_j$coefficients))))
+                             rowSums(is.na(fit_j$coefficients))),
+                n_svs = if (is.null(sv_j)) 0L else ncol(sv_j)
+                )
 setorder(joint_F, P.Value)
 joint_F[fdr < 0.05, sig.qvalue := "sig"]
 
