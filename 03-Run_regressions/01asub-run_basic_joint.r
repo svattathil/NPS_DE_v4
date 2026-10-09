@@ -56,11 +56,33 @@ joint_per_domain[fdr < 0.05, sig.qvalue05 := "sig"]
 joint_F <- topTable(fit_j, coef = nps_coefs, number = Inf,
                     sort.by = "none") |>
 as.data.table(keep.rownames = "protein") |>
-Annotate_result(cohort = args$cohort,
-                model = "joint_F",
+Annotate_result(cohort    = args$cohort,
+                model     = "joint_F",
                 n_domains = length(nps_coefs),
-                n_samples = length(samples_j))
+                n_obs     = (fit_j$df.residual + ncol(design_j) -
+                             rowSums(is.na(fit_j$coefficients))))
 setorder(joint_F, P.Value)
 joint_F[fdr < 0.05, sig.qvalue := "sig"]
 
+
 message("Joint F-test proteins at FDR < 0.05: ", joint_F[fdr < 0.05, .N])
+
+### calculate inflation factor
+chisq.all <- qchisq(joint_F[, P.Value], 1, lower.tail=FALSE)
+lambda.median.all <- median(chisq.all) / qchisq(0.5,1)
+lambdatext.all <- bquote(lambda ~ '=' ~ .(signif(lambda.median.all, 4)))
+
+
+###  Draw qq plot
+n.na <- sum(is.na(joint_F$P.Value))
+titleqq <- paste0(args$cohort , " joint F-test", "\n", "N=", nrow(sub_pdat))
+if(n.na > 0) { titleqq <- paste0(titleqq, "; excluding ", n.na, " proteins with NA P-value") }
+joint_qq <- qqunif.plot(joint_F[!is.na(P.Value), P.Value],
+                        maintitle=titleqq,
+                        subxlab=lambdatext.all,
+                        par.settings=list(par.sub.text=list(cex=1))
+                        )
+
+pdf(file.path(outdir, outfiles$joint_qq), height = 7, width = 7)
+print(joint_qq)
+invisible(dev.off())

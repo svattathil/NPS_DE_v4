@@ -94,7 +94,8 @@ outfiles <- list(
 
 if(args$run == "basic") {
     outfiles[["joint_per_domain"]] <- paste0(args$cohort, "_joint_perDomain.tsv")
-    outfiles[["joint_ftest"]]     = paste0(args$cohort, "_joint_Ftest.tsv")
+    outfiles[["joint_ftest"]]      <- paste0(args$cohort, "_joint_Ftest.tsv")
+    outfiles[["joint_qq"]]         <- paste0(args$cohort, "_joint_Ftest_qqplot.pdf")
 }
 
 ## These files are per domain, so define name using a function
