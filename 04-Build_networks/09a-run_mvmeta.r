@@ -48,11 +48,12 @@ covarmats <- sapply(cohorts, function(x) { readRDS(File.covarmat(x)) }, simplify
 
 ### Prepare data
 ## Make vector of eigengenes tested in all three cohorts
-eigengenes_to_test <- intersect(names(betas[[1]]), intersect(names(betas[[2]]), names(betas[[3]])))
+eigengenes_to_test <- intersect(names(betas[[1]]),
+                                intersect(names(betas[[2]]), names(betas[[3]])))
 
 
 ## Run meta-analysis for each eigengene in turn
-meta_res <- vector("numeric", length(eigengenes_to_test))
+meta_p <- meta_chisq <- vector("numeric", length(eigengenes_to_test))
 contributing_cohorts <- vector("character", length(eigengenes_to_test))
 
 
@@ -87,28 +88,34 @@ for(i in 1:length(eigengenes_to_test)) {
         ## To get pooled eigengene effect
         fit_mv <- mixmeta(
             beta_mat[ok_cohorts, , drop = FALSE],
-            S = cov_list[ok_cohorts],
+            S      = cov_list[ok_cohorts],
             method = "fixed")
 
         ## Joint test that all 9 p-values are 0
         res <- car::linearHypothesis(
                         fit_mv,
-                        hypothesis.matrix = diag(length(coef(fit_mv))))
-
-        protres <- res[["Pr(>Chisq)"]][2]
+                        hypothesis.matrix = diag(length(coef(fit_mv)))
+                    )
+        chisq <- res[["Chisq"]][2]
+        pval <- res[["Pr(>Chisq)"]][2]
     }else {
-        protres <- NA_real_
+        chisq <- NA_real_
+        pval <- NA_real_
     }
 
     ## Save results to list
-    meta_res[i]             <- protres
+    meta_p[i]               <- pval
+    meta_chisq[i]           <- chisq
     contributing_cohorts[i] <- paste0(ok_cohorts, collapse=",")
 }
 #rm(i)
 
 
 ### Make table for print
-summstats <- data.table(eigengene = eigengenes_to_test, p = meta_res, cohorts = contributing_cohorts)
+summstats <- data.table(eigengene = eigengenes_to_test,
+                        Chisq = meta_chisq,
+                        p = meta_p,
+                        cohorts = contributing_cohorts)
 setorder(summstats, p)
 summstats[p < 0.05, sig.nominal05 := "sig"]
 
