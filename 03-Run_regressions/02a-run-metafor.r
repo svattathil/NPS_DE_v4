@@ -7,7 +7,7 @@ rm(list = ls())
 
 
 ###### GOAL ######
-## Run cross-cohort meta-analysis for specified outcome
+## Run cross-cohort meta-analysis for each NPS domain for specified model
 
 
 ##### CONSTANTS #####
@@ -17,13 +17,14 @@ source("1_Code/project_constants.r")
 
 ###### FUNCTIONS ######
 source("~/comsv/Svattathil_Library/svattathil_functions.r")
+source("~/comsv/Svattathil_Library/manhattan_and_qq_plot_functions.r")
 
 
 ###### SETUP ######
 ### Command line arguments
 ## Create parser
 parser <- ArgumentParser()
-parser$add_argument("--run", type="character", default="basic", help = "basic, nSV, or cond_ind")
+parser$add_argument("--run", type="character", default="basic", help = "basic, noSV, severity, or, cond_ind")
 parser$add_argument("--SE_type", type="character", default="SE_mod", help = "SE_mod or SE_unmod")
 
 
@@ -42,11 +43,13 @@ if(args$run %in% c("severity")) {
 
 
 ### Files that exist
-resdir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", Capwords(args$run), "/")
-
-if(args$run %in% "cond_ind") {
+if(args$run %in% "cond_ind") { ## Used naming that I don't want to propagate
+    resdir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", "Basic", "/")
     Statsfile <- function(acohort) {  paste0(resdir, acohort, "_joint_perDomain.tsv") }
-}else {
+}
+
+if(args$run %in% c("basic", "noSV", "severity")) {
+    resdir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", Capwords(args$run), "/")
     Statsfile <- function(acohort) {  paste0(resdir, acohort, "_", args$run, ".tsv") }
 }
 
@@ -54,7 +57,9 @@ if(args$run %in% "cond_ind") {
 ### Files to be created
 outdir <- paste0(resdir, "Metafor/")
 MyMkdir(outdir)
-out.stats <- paste0(outdir, "metafor_", args$run, "_using_", args$SE_type, ".txt")
+outfiles <- list(stats = paste0(outdir, "metafor_", args$run, "_using_", args$SE_type, ".txt"),
+                 qq    = paste0(outdir, "metafor_", args$run, "_using_", args$SE_type, "_qqplots.pdf")
+                 )
 
 
 ###### MAIN ######
@@ -122,6 +127,30 @@ for(currnps in npsvars) {
 rm(currnps)
 
 
+
+###  Make qq plots
+qq_list <- list()
+
+for(currnps in npsvars) {
+    pvals <- unlist(fe_results_list.nps[[currnps]][, fe_p])
+
+    ## calculate inflation factor
+    chisq.all <- qchisq(pvals, 1, lower.tail=FALSE)
+    lambda.median.all <- median(chisq.all) / qchisq(0.5,1)
+    lambdatext.all <- bquote(lambda ~ '=' ~ .(signif(lambda.median.all, 4)))
+
+    ## draw plot
+    n.na <- sum(is.na(pvals))
+    titleqq <- paste("Fixed-effects cross-cohort meta-analysis \n",
+                     names(npsvars)[npsvars == currnps])
+    if(n.na > 0) { titleqq <- paste0(titleqq, "; excluding ", n.na, " proteins with NA P-value") }
+    qq_list[[currnps]] <- qqunif.plot(pvals[!is.na(pvals)],
+                                  maintitle=titleqq, subxlab=lambdatext.all,
+                                  par.settings=list(par.sub.text=list(cex=1)))
+}
+rm(currnps)
+
+
 ### Make flat table for printing
 ## Can reshape as desired in a later step for supplementary table
 ## or followup analyses
@@ -129,5 +158,10 @@ fe_results_allnps <- rbindlist(fe_results_list.nps, idcol = "nps")
 
 
 ###### FINISH ######
-fwrite(fe_results_allnps, file = out.stats, quote = FALSE, sep = "\t", na = NA)
+## Write results table to file
+fwrite(fe_results_allnps, file = outfiles$stats, quote = FALSE, sep = "\t", na = NA)
 
+## Draw QQ plots to file
+pdf(outfiles$qq)
+invisible(sapply(qq_list, print))
+dev.off()
