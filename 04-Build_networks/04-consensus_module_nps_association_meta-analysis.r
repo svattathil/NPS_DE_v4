@@ -2,8 +2,8 @@ library(data.table)
 library(argparse)
 library(metafor)
 library(qvalue)
+library(stringr)
 rm(list = ls())
-
 
 
 ###### GOAL ######
@@ -21,6 +21,7 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 ## Create parser
 parser <- ArgumentParser()
 parser$add_argument("--auto_softpower", type="integer", default=9, help="")
+parser$add_argument("--residset", type="character", default="regressSVs", help="")
 
 ## Read from parser
 args <- parser$parse_args()
@@ -29,12 +30,15 @@ args <- parser$parse_args()
 ###### SETUP ######
 
 ### Files that exist
-indir <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/Auto_softpower", args$auto_softpower, "/")
-infiles <- list(res = paste0(indir, "nps_regression_results_per-cohort.txt"))
+fileid <- paste0(args$residset, "_auto_softpower", args$auto_softpower)
+indir <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/",
+                stringr::str_to_title(paste0(args$residset, "_Auto_softpower",
+                                             args$auto_softpower)), "/")
+infiles <- list(res = paste0(indir, fileie, "_nps_regression_results_per-cohort.txt"))
 
 
 ### Files to be created
-outfiles <- list(fe_results = paste0(indir, "nps_regression_results_meta.txt"))
+outfiles <- list(fe_results = paste0(indir, fileid, "_nps_regression_results_meta.txt"))
 
 
 ###### MAIN ######
@@ -76,4 +80,5 @@ fe_results[, sig.qvalue05 := ifelse(qvalue < 0.05, TRUE, FALSE)]
 
 
 ###### FINISH ######
-write.table(fe_results, file = outfiles[["fe_results"]], row.names = FALSE, quote = FALSE, sep = "\t")
+write.table(fe_results, file = outfiles[["fe_results"]],
+            row.names = FALSE, quote = FALSE, sep = "\t")

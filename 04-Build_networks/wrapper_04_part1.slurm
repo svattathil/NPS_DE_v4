@@ -18,76 +18,82 @@ nthreads=$SLURM_JOB_CPUS_PER_NODE
 source ~/.bashrc
 conda activate env1
 
-
+### CONSTANTS ###
 scriptdir=1_Code/04-Build_networks/
-outdir=2_Pipeline/04-Build_networks/
-
-### 1. Build networks
-### Run in interactive session
 scriptfile=$scriptdir/01a-run_wgcna.rmd
 
 
 
-residset=ignoreSVs
+### MANUALLY DEFINED OPTIONS FOR THIS RUN ###
+residset=regressSVs
+
+
+### SETUP ###
+reportdir=2_Pipeline/04-Build_networks/Reports/${residset^}/
+mkdir -p $reportdir
+
+
+### MAIN ###
+### 1. Build networks
+### Run in interactive session
+
 
 ### -- For OHSU ###
 cohort=OHSU
 softpower=9
 
 
-outputfile=wgcna_report_${cohort}_${residset}_softpower$softpower.html
+outputfile=wgcna_report_cohort-specific_${cohort}_${residset}_softpower$softpower.html
 cmd=(R --slave -e )
 cmd+=("'rmarkdown::render(")
 cmd+=('"'$scriptfile'",')
-cmd+=('output_dir="'${outdir}'",')
+cmd+=('output_dir="'${reportdir}'",')
 cmd+=('output_file="'${outputfile}'",')
 cmd+=('knit_root_dir=getwd(),')
 cmd+=("intermediates_dir=getwd())'")
 cmd+=('--args --cohort ' $cohort)
 cmd+=('--softpower '$softpower)
-cmd+=('--residset 'ignoreSVs)
+cmd+=('--residset '$residset)
 
 ## execute command
 eval ${cmd[*]}
+
 
 ### -- For rush ### 
 cohort=rush
 softpower=9
 
-outputfile=wgcna_report_${cohort}_${residset}_softpower$softpower.html
+outputfile=wgcna_report_cohort-specific_${cohort}_${residset}_softpower$softpower.html
 cmd=(R --slave -e )
 cmd+=("'rmarkdown::render(")
 cmd+=('"'$scriptfile'",')
-cmd+=('output_dir="'${outdir}'",')
+cmd+=('output_dir="'${reportdir}'",')
 cmd+=('output_file="'${outputfile}'",')
 cmd+=('knit_root_dir=getwd(),')
 cmd+=("intermediates_dir=getwd())'")
 cmd+=('--args --cohort ' $cohort)
 cmd+=('--softpower '$softpower)
-cmd+=('--residset 'ignoreSVs)
-
+cmd+=('--residset '$residset)
 
 ## execute command
 eval ${cmd[*]}
-
 
 
 ### -- For emory ###
 cohort=emory
 softpower=9
 
-outputfile=wgcna_report_${cohort}_${residset}_softpower$softpower.html
+outputfile=wgcna_report_cohort-specific_${cohort}_${residset}_softpower$softpower.html
 cmd=(R --slave -e )
 cmd+=("'rmarkdown::render(")
 cmd+=('"'$scriptfile'",')
-cmd+=('output_dir="'${outdir}'",')
+cmd+=('output_dir="'${reportdir}'",')
 cmd+=('output_file="'${outputfile}'",')
 cmd+=('knit_root_dir=getwd(),')
 cmd+=("intermediates_dir=getwd())'")
 cmd+=('--args --cohort ' $cohort)
 cmd+=('--softpower '$softpower)
-cmd+=('--residset 'ignoreSVs)
-
+cmd+=('--residset '$residset)
 
 ## execute command
 eval ${cmd[*]}

@@ -73,8 +73,9 @@ parser <- ArgumentParser()
 parser$add_argument("--cohort", type="character", help="OHSU, rush, or emory", default = "emory")
 parser$add_argument("--softpower", type="integer", help="value for softpower", default = 9)
 parser$add_argument("--cutheight", type="double", help="value for mergeCutHeight", default = 0.30)
+parser$add_argument("--residset", type="character", default="regressSVs", help="")
 parser$add_argument("--network_set", type="character", help="cohort-specific or consensus",
-                    default = "cohort-specific")
+                    default = "consensus")
 
 
 ## Read from parser
@@ -121,8 +122,10 @@ if(args$network_set == "cohort-specific") {
 }
 
 if(args$network_set == "consensus") {
-    indir <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/Auto_softpower", args$softpower, "/")
-    runid <- paste0("auto_softpower", args$softpower, "_", args$cohort)
+    indir <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/",
+                stringr::str_to_title(paste0(args$residset, "_Auto_softpower",
+                                             args$auto_softpower)), "/")
+    runid <- paste0(args$residset, "_auto_softpower", args$auto_softpower, "_", args$cohort)
     
 }
 

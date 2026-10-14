@@ -15,6 +15,18 @@ source("1_Code/project_constants.r")
 
 npsmap <- data.table(code_name = npsvars.bin, text_name = names(npsvars.bin))
 
+
+##### COMMAND LINE ARGUMENTS #####
+## Create parser
+parser <- ArgumentParser()
+parser$add_argument("--auto_softpower", type="integer", default=9, help="")
+parser$add_argument("--residset", type="character", default="regressSVs", help="")
+
+## Read from parser
+args <- parser$parse_args()
+
+
+
 ###### FUNCTIONS ######
 source("~/comsv/Svattathil_Library/svattathil_functions.r")
 
@@ -22,29 +34,34 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 ###### SETUP ######
 ### Files that exist
 ### module eigengene ~ NPS association statistics
-dir1 <- "2_Pipeline/04-Build_networks/Wgcna_out/Consensus/Auto_softpower9/"
+
+dir1 <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/",
+                stringr::str_to_title(paste0(args$residset, "_Auto_softpower",
+                                             args$auto_softpower)), "/")
+
 dir_npsassoc <- dir1
-infiles_npsassoc <- list(per_cohort = paste0(dir1, "nps_regression_results_per-cohort.txt"),
-                        meta       = paste0(dir1, "nps_regression_results_meta.txt"))
+fileid <- paste0(args$residset, "_auto_softpower", args$auto_softpower)
+infiles_npsassoc <- list(per_cohort = paste0(dir1, fileid, "_nps_regression_results_per-cohort.txt"),
+                        meta       = paste0(dir1, fileid, "_nps_regression_results_meta.txt"))
 
 
 ### module eigengene ~ latent factor association statistics
 dir_lfassoc <- paste0(dir1, "DEA_latent_factors/")
 infiles_lfassoc <- sapply(cohorts, function(acohort) {
     paste0(dir_lfassoc,
-           "auto_softpower9_", acohort, "_eigengene_regress_stats_latent_factors.txt")
+           fileid, "_", acohort, "_eigengene_regress_stats_latent_factors.txt")
 }, simplify = FALSE)
 
 
 ### module eigengene ~ multivariate association statistics
 dir_multassoc <- paste0(dir1, "Multivariate/")
 infiles_multassoc <- sapply(cohorts, function(acohort) {
-    paste0(dir_multassoc, "eigengene_multivar_", acohort, "_regression_stats.txt")
+    paste0(dir_multassoc, "eigengene_multivar_", fileid, "_", acohort, "_regression_stats.txt")
 }, simplify = FALSE)
 
 
 ### Files to be created
-outpref <- "aggregated_association_results_for_supp"
+outpref <- paste0("aggregated_association_results_for_supp_", fileid)
 outfiles <- list(nps     = paste0(dir1, outpref, "_nps.txt"),
                  lf_mult = paste0(dir1, outpref, "_latfac_multivariate.txt"))
 

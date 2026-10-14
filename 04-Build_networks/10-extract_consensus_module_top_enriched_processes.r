@@ -24,6 +24,8 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 ###### COMMAND LINE ARGUMENTS ######
 ## Create parser
 parser <- ArgumentParser()
+parser$add_argument("--auto_softpower", type="integer", default=9, help="")
+parser$add_argument("--residset", type="character", default="regressSVs", help="")
 parser$add_argument("--ntop", type="integer", default=1,
                     help="number of gene sets to keep per source")
 
@@ -35,10 +37,14 @@ args <- parser$parse_args()
 
 ###### SETUP ######
 ### Files that exist
-dir_enrichment <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/",
-                         "Auto_softpower9/Enrichment/")
+indir <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/",
+                stringr::str_to_title(paste0(args$residset, "_Auto_softpower",
+                                             args$auto_softpower)), "/")
+dir_enrichment <- paste0(indir, "/Enrichment/")
+
+fileid <- fileid <- paste0(args$residset, "_auto_softpower", args$auto_softpower)
 infiles <- list(enrichment = paste0(dir_enrichment,
-                                    "consensus_modules_auto_softpower9_",
+                                    "consensus_modules_", fileid, "_",
                                     "pthresh1_gene_set_enrichment.xlsx"))
 
 
@@ -47,11 +53,11 @@ infiles <- list(enrichment = paste0(dir_enrichment,
 ## Otherwise, use number of top gene sets from args$ntop
 if(args$thresh > 0) {
 outfiles <- list(summtab = paste0(dir_enrichment,
-                                      "consensus_modules_auto_softpower9_",
+                                      "consensus_modules_", fileid, "_",
                                       "adjp", args$thresh, "_enriched_processes.txt"))
 } else {
     outfiles <- list(summtab = paste0(dir_enrichment,
-                                      "consensus_modules_auto_softpower9_",
+                                      "consensus_modules_", fileid, "_",
                                       "top", args$ntop, "_enriched_processes.txt"))
 }
 

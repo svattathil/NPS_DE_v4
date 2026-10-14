@@ -4,9 +4,8 @@ library(argparse)
 rm(list = ls())
 
 
-
 ###### GOAL ######
-
+## Get list of genes that were used in WGCNA in all cohorts
 
 
 ##### CONSTANTS #####
@@ -23,12 +22,8 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 ### Command line arguments
 ## Create parser
 parser <- ArgumentParser()
-#parser$add_argument("--", type="character", help="")
-#parser$add_argument("--", action="store_true", default=TRUE, help="")
-#parser$add_argument("--", action="store_true", default=FALSE, help="")
-#parser$add_argument("--", action="store_false", dest="", help="")
-#parser$add_argument("--", type="integer", default=10, help="")
-#parser$add_argument("--", type="double", default=10, help="")
+parser$add_argument("--residset", type="character", default = "regressSVs", help="")
+
 
 ## Read from parser
 args <- parser$parse_args()
@@ -37,13 +32,14 @@ args <- parser$parse_args()
 ### Files that exist
 infiles <- sapply(cohorts, function(acohort) {
     paste0("2_Pipeline/04-Build_networks/Wgcna_out/Cohort-specific/",
-           acohort, "_ignoreSVs_softpower",
+           acohort, "_", args$residset, "_softpower",
            softpowers[acohort], "_cutheight0.30_gene_conn_stats.txt") },
     simplify = FALSE)
 
 
 ### Files to be created
-outfiles <- list(txt = "2_Pipeline/04-Build_networks/shared_genes_for_consensus_module.txt")
+outfiles <- list(txt = "2_Pipeline/04-Build_networks/shared_genes_for_consensus_module_",
+                 args$residset, ".txt")
 
 
 ###### MAIN ######

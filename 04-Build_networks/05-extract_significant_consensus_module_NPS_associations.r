@@ -22,6 +22,7 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 ### Command line arguments
 ## Create parser
 parser <- ArgumentParser()
+parser$add_argument("--residset", type="character", default="regressSVs", help="")
 parser$add_argument("--auto_softpower", type = "integer", help = "", default = 9)
 
 ## Read from parser
@@ -29,15 +30,17 @@ args <- parser$parse_args()
 
 
 ### Files that exist
-indir <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/Auto_softpower",
-                args$auto_softpower, "/")
-infiles <- list(specific = paste0(indir, "nps_regression_results_per-cohort.txt"),
-                meta     = paste0(indir, "nps_regression_results_meta.txt"))
+indir <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/",
+                stringr::str_to_title(paste0(args$residset, "_Auto_softpower",
+                                             args$auto_softpower)), "/")
+
+fileid <- paste0(args$residset, "_auto_softpower", args$auto_softpower)
+infiles <- list(specific = paste0(indir, fileid, "_nps_regression_results_per-cohort.txt"),
+                meta     = paste0(indir, fileid, "_nps_regression_results_meta.txt"))
 
 
 ### Files to be created
-outfiles <- list(sig = paste0(indir, "nps_regression_sig_auto_softpower",
-                              args$auto_softpower, ".txt"))
+outfiles <- list(sig = paste0(indir, "nps_regression_sig_", fileid, ".txt"))
 
 
 ###### MAIN ######

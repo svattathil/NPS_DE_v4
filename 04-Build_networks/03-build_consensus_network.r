@@ -25,7 +25,7 @@ nps <- npsvars.bin
 parser <- ArgumentParser()
 parser$add_argument("--auto_softpower", type="integer", default=9, help="")
 parser$add_argument("--use_powervec1", action="store_true", default=FALSE, help="")
-parser$add_argument("--residset", type="character", default="ignoreSVs", help="")
+parser$add_argument("--residset", type="character", default="regressSVs", help="")
 
 ## Read from parser
 args <- parser$parse_args()
@@ -101,16 +101,19 @@ infiles[["phenos"]] <- sapply(cohorts, function(acohort) {
 
 
 ### Files to be created
-outdir   <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/", stringr::str_to_title(network_group), "/")
+outdir   <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/",
+                   stringr::str_to_title(paste0(args$residset, "_", network_group)), "/")
 MyMkdir(outdir)
 
 outfiles <- list()
-Outfilepref <- function() { paste0(outdir, network_group, "_", acohort) }
-outfiles[["Gene_conn_stats"]] <- function(acohort) { paste0(Outfilepref(), "_gene_conn_stats.txt") }
-outfiles[["Eigengenes"]]      <- function(acohort) { paste0(Outfilepref(), "_eigengenes.txt") }
-outfiles[["kME_mean"]]        <- paste0(outdir, network_group, "_mean_kME.txt")
-outfiles[["gene_counts"]]     <- paste0(outdir, network_group, "_module_protein_counts.txt")
-outfiles[["regression"]]      <- paste0(outdir, "nps_regression_results_per-cohort.txt")
+Outfilepref <- function() { paste0(outdir, args$residset, "_", network_group) }
+outfiles[["Gene_conn_stats"]] <- function(acohort) {
+    paste0(Outfilepref(), "_", acohort, "_gene_conn_stats.txt") }
+outfiles[["Eigengenes"]]      <- function(acohort) {
+    paste0(Outfilepref(), "_", acohort, "_eigengenes.txt") }
+outfiles[["kME_mean"]]        <- paste0(Outfilepref(), "_mean_kME.txt")
+outfiles[["gene_counts"]]     <- paste0(Outfilepref(), "_module_protein_counts.txt")
+outfiles[["regression"]]      <- paste0(Outfilepref(), "nps_regression_results_per-cohort.txt")
 
 
 ###### MAIN ######
