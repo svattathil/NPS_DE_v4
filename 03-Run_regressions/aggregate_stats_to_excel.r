@@ -47,13 +47,23 @@ if(args$run == "severity") {
 
 for(acohort in cohorts) {
     ### Files that exist
-    indir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", Capwords(args$run), "/")
-    fileid <- paste0(acohort, "_", args$run)
+    if(args$run == "cond_ind") {
+        indir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", "Basic", "/")
+        fileid <- paste0(acohort, "_", "joint_perDomain")
+        infiles <- list(
+            limma_per_domain = paste0(indir, fileid, ".tsv")
+        )
+    }
+    else {
+        indir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", Capwords(args$run), "/")
+        fileid <- paste0(acohort, "_", args$run)
 
-    infiles <- list(
-        limma_per_domain = paste0(indir, fileid, ".tsv"),
-        summary = paste0(indir, fileid, "_summary.tsv")
-    )
+        infiles <- list(
+            limma_per_domain = paste0(indir, fileid, ".tsv"),
+            summary = paste0(indir, fileid, "_summary.tsv")
+        )
+
+    }
 
 
     ### Files to be created
@@ -62,8 +72,9 @@ for(acohort in cohorts) {
 
     ### Read in data
     res <- fread(infiles$limma_per_domain)
-    summ_contents <- fread(infiles$summary)
-
+    if(args$run != "cond_ind") {
+        summ_contents <- fread(infiles$summary)
+    }
 
     ### Split results by domain
     nps_list <- vector("list", length(npsvars))
@@ -77,8 +88,10 @@ for(acohort in cohorts) {
     ## then one worksheet per NPS
     wb <- createWorkbook()
 
-    addWorksheet(wb, sheetName = "summary")
-    writeData(wb, sheet = "summary", summ_contents)
+    if(args$run != "cond_ind") {
+        addWorksheet(wb, sheetName = "summary")
+        writeData(wb, sheet = "summary", summ_contents)
+    }
 
     for (sheet_name in names(nps_list)) {
         addWorksheet(wb, sheetName = sheet_name)

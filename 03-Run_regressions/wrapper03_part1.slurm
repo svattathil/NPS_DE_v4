@@ -57,8 +57,11 @@ run_limma_script01() {
 
 ## Basic model
 run_limma_script01 basic
-Rscript $scriptdir/02a-run-metafor.r --run basic
-Rscript $scriptdir/aggregate_stats_to_excel.r --run basic
+#Rscript $scriptdir/02a-run-metafor.r --run basic
+Rscript $scriptdir/02a-run-metafor.r --run cond_ind
+#Rscript $scriptdir/aggregate_stats_to_excel.r --run basic
+Rscript $scriptdir/aggregate_stats_to_excel.r --run cond_ind
+
 
 ## NoSV model
 run_limma_script01 noSV

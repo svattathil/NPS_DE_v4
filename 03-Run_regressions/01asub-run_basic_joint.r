@@ -38,16 +38,25 @@ fit_j <- Fit_limma(edat_j, design_j)
 
 
 ### Extract conditionally independent per-domain effects
-joint_per_domain <- lapply(nps_coefs, function(cf) {
-    topTable(fit_j, coef = cf, number = Inf, sort.by = "none") |>
-    as.data.table(keep.rownames = "protein") |>
-    Annotate_result(domain = cf,
+joint_per_domain <- lapply(nps_coefs, function(coef_name) {
+    res <- topTable(fit_j, coef = coef_name, number = Inf, sort.by = "none") |>
+    as.data.table(keep.rownames = "protein")
+
+    ## Add unmoderated and moderated SE columns
+    res[, SE_unmod := (fit_j$sigma * fit_j$stdev.unscaled[, coef_name])]
+    res[, SE_mod := (sqrt(fit_j$s2.post) * fit_j$stdev.unscaled[, coef_name])]
+    res[, df_residual := fit_j$df.residual]
+    res[, df_total := fit_j$df.residual + fit_j$df.prior]
+
+    Annotate_result(dt = res,
+                    domain = coef_name,
                     cohort = args$cohort,
                     model = "joint",
                     n_obs     = (fit_j$df.residual + ncol(design_j) -
                              rowSums(is.na(fit_j$coefficients))),
                     n_svs = if (is.null(sv_j)) 0L else ncol(sv_j)
                     )
+    return(res)
 }) |>
 rbindlist(use.names = TRUE, fill = TRUE)
 setorder(joint_per_domain, domain, P.Value)
