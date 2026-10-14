@@ -16,6 +16,7 @@ source("1_Code/project_constants.r")
 
 ###### FUNCTIONS ######
 source("~/comsv/Svattathil_Library/svattathil_functions.r")
+source("~/comsv/Svattathil_Library/manhattan_and_qq_plot_functions.r")
 
 
 ###### SETUP ######
@@ -37,7 +38,9 @@ Statsfile <- function(acohort) { paste0(resdir, acohort, "_joint_Ftest.tsv") }
 ### Files to be created
 outdir <- paste0(resdir, "Cross-cohort_joint/")
 MyMkdir(outdir)
-out.stats <- paste0(outdir, "ftest_cross-cohort_fisher_stouffer.txt")
+outfiles<- list(stats = paste0(outdir, "ftest_cross-cohort_fisher_stouffer.txt"),
+                qq    = paste0(outdir, "ftest_cross-cohort_fisher_stouffer_qqplots.pdf")
+                )
 
 
 ###### MAIN ######
@@ -103,14 +106,41 @@ Combine_omnibus_p <- function(dt, cohorts = c("OHSU", "rush", "emory"),
     dt[]
 }
 
-
-
 res <- Combine_omnibus_p(merged)
 setorder(res, p_stouffer)
 res[qvalue_fisher < 0.05, sig_fisher := "sig"]
 res[qvalue_stouffer < 0.05, sig_stouffer := "sig"]
 
 
+###  Make qq plots
+qq_list <- list()
+
+for(amethod in c("fisher", "stouffer")) {
+    pcol <- paste0("p_", amethod)
+    pvals <- unlist(res[, ..pcol])
+
+    ## calculate inflation factor
+    chisq.all <- qchisq(pvals, 1, lower.tail=FALSE)
+    lambda.median.all <- median(chisq.all) / qchisq(0.5,1)
+    lambdatext.all <- bquote(lambda ~ '=' ~ .(signif(lambda.median.all, 4)))
+
+    ## draw plot
+    n.na <- sum(is.na(pvals))
+    titleqq <- paste0(Capwords(amethod), " combined p-values")
+    if(n.na > 0) { titleqq <- paste0(titleqq, "; excluding ", n.na, " proteins with NA P-value") }
+    qq_list[[amethod]] <- qqunif.plot(pvals[!is.na(pvals)],
+                                  maintitle=titleqq, subxlab=lambdatext.all,
+                                  par.settings=list(par.sub.text=list(cex=1)))
+}
+
+
 ###### FINISH ######
-fwrite(res, file = out.stats, quote = FALSE, sep = "\t", na = NA)
+## Draw QQ plots to file
+pdf(outfiles$qq)
+par(mfrow = c(1, 2))
+invisible(sapply(qq_list, print))
+dev.off()
+
+## Write results table to file
+fwrite(res, file = outfiles$stats, quote = FALSE, sep = "\t", na = NA)
 
