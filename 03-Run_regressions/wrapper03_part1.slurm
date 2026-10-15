@@ -1,7 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=wrapper03_1
 #SBATCH --nodes=1
-#SBATCH --mem=4G 
+#SBATCH --mem=16G
+#SBATCH --array=2-12
 #SBATCH --cpus-per-task=1
 #SBATCH --time=0-2:00:00 
 #SBATCH --output=Slurmout/%x-%A_%a.o
@@ -20,11 +21,15 @@ conda activate env1
 
 scriptdir=1_Code/03-Run_regressions/
 
+
 ## Functions
 run_limma_script01() {
     ## Run the 01a script to run per-domain regressions for each cohort in turn
     ## Bail out if run fails on any cohort
-    local run=$1
+    ## analysis and svchoice are required arguments
+    local analysis=$1
+    shift
+    local svchoice=$1
     shift
     local cohorts=("$@")
     local acohort
@@ -36,57 +41,82 @@ run_limma_script01() {
 
     for acohort in "${cohorts[@]}"
     do
+	runid=${analysis}_${svchoice}
 
-	logfile=2_Pipeline/03-Run_regressions/Prot_perDomain/"${run^}"/${run}_${acohort}.log
+	logfile=2_Pipeline/03-Run_regressions/Prot_perDomain/"${runid^}"_${acohort}.log
         cmd=(Rscript 1_Code/03-Run_regressions/01a-limma_nps_DE.r)
 	cmd+=(--robust)
 	cmd+=(--trend)
-	cmd+=(--run $run)
+	cmd+=(--analysis $analysis)
+	cmd+=(--svchoice $svchoice)
         cmd+=(--cohort $acohort)
 	
         
         echo ${cmd[*]}
         eval ${cmd[*]} 2> $logfile
 	if [[ $? -ne 0 ]]; then
-            echo "Failed on $acohort (run: $run) — see log at $logfile"
+            echo "Failed on $acohort (run: $runid) — see log at $logfile"
             return 1
         fi
     done
 }
 
 
-## Basic model
-run_limma_script01 basic
-#Rscript $scriptdir/02a-run-metafor.r --run basic
-Rscript $scriptdir/02a-run-metafor.r --run cond_ind
-#Rscript $scriptdir/aggregate_stats_to_excel.r --run basic
-Rscript $scriptdir/aggregate_stats_to_excel.r --run cond_ind
+## The first set of tasks includes SVs as covariates
+## The second set does not
+if (( SLURM_ARRAY_TASK_ID >= 1 && SLURM_ARRAY_TASK_ID <= 6 )); then
+    svchoice="withSV"
+elif (( SLURM_ARRAY_TASK_ID >= 7 && SLURM_ARRAY_TASK_ID <= 12 )); then
+    svchoice="noSV"
+else
+    echo "Error: SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID} is outside 1-12" >&2
+    exit 1
+fi
 
 
-## NoSV model
-run_limma_script01 noSV
-Rscript $scriptdir/02a-run-metafor.r --run noSV
-Rscript $scriptdir/aggregate_stats_to_excel.r --run noSV
+## 1. Run limma
+case $SLURM_ARRAY_TASK_ID in
+    1|7)
+	analysis=basic
+	run_limma_script01 $analysis $svchoice
+	;;
+    2|8)
+	analysis=severity
+	run_limma_script01 $analysis $svchoice OHSU emory
+        ;;
+    
+    3|9)
+	analysis=males
+	run_limma_script01 $analysis $svchoice
+        ;;
+    4|10)
+	analysis=females
+	run_limma_script01 $analysis $svchoice
+        ;;
+
+    5|11)
+	analysis=e4_adj
+	run_limma_script01 $analysis $svchoice
+        ;;
+    6|12)
+	analysis=latfactor
+	run_limma_script01 $analysis $svchoice
+        ;;
+esac
 
 
-
-## Sensitivity - Severity
-run_limma_script01 severity OHSU emory
-Rscript $scriptdir/02a-run-metafor.r --run severity
-Rscript $scriptdir/aggregate_stats_to_excel.r --run severity
-
-
-## Sensitivity - sex-specific
-run_limma_script01 males
-Rscript $scriptdir/aggregate_stats_to_excel.r --run males
-
-run_limma_script01 females
-Rscript $scriptdir/aggregate_stats_to_excel.r --run females
-
-## Sensitivity - adjust e4 expression
-run_limma_script01 e4_adj
-Rscript $scriptdir/02a-run-metafor.r --run e4_adj
+## 2. Run meta-analysis and aggregate statistics to Excel workbook
+if [[ $analysis != "latfactor" ]]; then
+    ## Don't run cross-cohort meta-analysis for latent factors
+    Rscript $scriptdir/02a-run-metafor.r          --analysis $analysis --svchoice $svchoice
+    Rscript $scriptdir/aggregate_stats_to_excel.r --analysis $analysis --svchoice $svchoice
+fi
 
 
-## Latent factors
-run_limma_script01 latfactor
+if [[ $analysis == "basic" ]]; then
+    ## The cond_ind analysis is performed inside the basic analysis -- 
+    ## do the meta-analysis and stats aggregation for those results here
+    Rscript $scriptdir/02a-run-metafor.r          --analysis cond_ind --svchoice $svchoice
+    Rscript $scriptdir/aggregate_stats_to_excel.r --analysis cond_ind --svchoice $svchoice
+fi
+

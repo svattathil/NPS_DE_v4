@@ -34,9 +34,11 @@ source("1_Code/03-Run_regressions/01asub-limma_nps_DE_functions.r")
 parser <- ArgumentParser(description = "limma DE of log2 protein abundance on NPS domains")
 
 ## Control model and sample set
-parser$add_argument("--run", default = "basic",
-                    help = paste0("Specify the run (basic, noSV, severity, ",
+parser$add_argument("--analysis", default = "basic",
+                    help = paste0("Specify the analysis (e.g., basic, severity, ",
                                   "males, females, e4_adj, latfactor)"))
+parser$add_argument("--svchoice", default = "noSV",
+                    help = paste0("withSV or noSV"))
 parser$add_argument("--cohort", default = "OHSU",
                     help = "Cohort label used in output file names.")
 ## Control limma
@@ -56,18 +58,25 @@ parser$add_argument("--seed", type = "integer", default = 20260101L)
 
 args <- parser$parse_args()
 
+
+## Check arguments
+CheckOptions("analysis", c("basic", "severity", "males", "females", "e4_adj", "latfactor"))
+CheckOptions("svchoice", c("withSV", "noSV"))
+CheckOptions("cohort", c("OHSU", "rush", "emory"))
+
+
 ## Process some of the args
 set.seed(args$seed)
 
 
 ### Files that exist
 infiles <- list(
-    phenos = paste0("2_Pipeline/02-Prepare_analysis_data/phenos_cleaned_SVs_",
-                    args$cohort, ".txt"),
+    phenos = paste0("2_Pipeline/02-Prepare_analysis_data/",
+                    "phenos_cleaned_SVs_", args$cohort, ".txt"),
     prot   = "2_Pipeline/01-Explore_data/prot.pcafiltered.log2norm.txt",
     e4_dat = "0_Data/From_v3/e4_phenos_allcohorts.txt"
 )
-if(args$run == "latfactor") {
+if(args$analysis == "latfactor") {
     infiles$fac_scores <- paste0("2_Pipeline/02-Prepare_analysis_data/Latent_factors/",
                                  "factor_scores_", args$cohort, ".txt")
 }
@@ -77,30 +86,32 @@ script_run_basic_joint <- "1_Code/03-Run_regressions/01asub-run_basic_joint.r"
 
 
 ### Files to be created
-outdir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", Capwords(args$run), "/")
+runid <- paste0(args$analysis, "_", args$svchoice)
+
+outdir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", Capwords(runid), "/")
 MyMkdir(outdir)
 
 diag_dir <-  "Diagnostics/"
 if (!args$no_diagnostics) {  MyMkdir(file.path(outdir, diag_dir)) }
 
-fileid <- paste0(args$cohort, "_", args$run)
 outfiles <- list(
-    limma_per_domain = paste0(fileid, ".tsv"),
-    summary_dt       = paste0(fileid, "_summary.tsv"),
-    diagnostics      = paste0(diag_dir, fileid, "_diagnostics.tsv"),
-    qq               = paste0(fileid, "_qqplots.pdf"),
+    limma_per_domain = paste0(runid, "_", args$cohort, ".tsv"),
+    summary_dt       = paste0(runid, "_summary_", args$cohort, ".tsv"),
+    diagnostics      = paste0(diag_dir, runid, "_diagnostics_", args$cohort, ".tsv"),
+    qq               = paste0(runid, "_qqplots_", args$cohort, ".pdf"),
     session_info     = "sessionInfo.txt"
 )
 
-if(args$run == "basic") {
-    outfiles[["joint_per_domain"]] <- paste0(args$cohort, "_joint_perDomain.tsv")
-    outfiles[["joint_ftest"]]      <- paste0(args$cohort, "_joint_Ftest.tsv")
-    outfiles[["joint_qq"]]         <- paste0(args$cohort, "_joint_Ftest_qqplot.pdf")
+if(args$analysis == "basic") {
+    outfiles[["cond_ind"]]      <- paste0("cond_ind_",    args$svchoice, "_", args$cohort, ".tsv")
+    outfiles[["joint_ftest"]]   <- paste0("joint_Ftest_", args$svchoice, "_", args$cohort, ".tsv")
+    outfiles[["cond_ind_qq"]]   <- paste0("cond_ind_",    args$svchoice, "_", args$cohort, "qqplot.pdf")
+    outfiles[["joint_qq"]]      <- paste0("joint_Ftest_", args$svchoice, "_", args$cohort, "qqplot.pdf")
 }
 
 ## These files are per domain, so define name using a function
 outfiles[["SA_plot"]] <- function(adomain) {
-    file.path(outdir, diag_dir, paste0(fileid, "_", make.names(adomain), "_pvalue_plotSA.png"))
+    file.path(outdir, diag_dir, paste0(runid, "_", args$cohort, "_", make.names(adomain), "_pvalue_plotSA.png"))
 }
 
 
@@ -109,47 +120,46 @@ outfiles[["SA_plot"]] <- function(adomain) {
 ### Set some values based on the run specifics
 ### ( More of this happens later also)
 ## predictors for this run
-if(args$run == "latfactor") {
+if(args$analysis == "latfactor") {
     predictors <- factornames
 } else{
-    if(args$run == "severity") {
+    if(args$analysis == "severity") {
         predictors <- npsvars.sev
     } else {
         predictors <- npsvars.bin
     }
 }
 
-
 ## useSV or no?
-useSV <- ifelse(args$run %in% c("noSV"), FALSE, TRUE)
+useSV <- ifelse(args$svchoice == "withSV", TRUE, FALSE)
 
 ## min non-missing donors to keep protein in analysis
-mincount <- ifelse(args$run %in% c("males", "females"), 25, 50)
+mincount <- ifelse(args$analysis %in% c("males", "females"), 25, 50)
 
 ## covars for this run
-## SVs will be added on the fly
-if(args$run %in% c("basic", "noSV", "severity", "latfactor")) {
+## SVs will be added on the fly if useSV is TRUE
+if(args$analysis %in% c("basic", "severity", "latfactor")) {
     covars <- c("Batch", "pmi", "age_death", "msex")
     fac_covars <- c("Batch")
 }
 
-if(args$run %in% c("males", "females")) {
+if(args$analysis %in% c("males", "females")) {
     covars <- c("Batch", "pmi", "age_death")
     fac_covars <- c("Batch")
 }
 
-if(args$run %in% c("e4_adj")) {
+if(args$analysis %in% c("e4_adj")) {
     covars <- c("Batch", "pmi", "age_death", "msex", "e4_expression")
     fac_covars <- c("Batch")
 }
 
 
 ### Read data
-pheno <- fread(infiles$pheno)
-prot <- fread(infiles$prot)
+pheno  <- fread(infiles$pheno)
+prot   <- fread(infiles$prot)
 e4_dat <- fread(infiles$e4_dat)
 
-if(args$run == "latfactor") {
+if(args$analysis == "latfactor") {
     fac_scores <- fread(infiles$fac_scores)
 }
 
@@ -163,23 +173,21 @@ pheno.orig <- copy(pheno)
 oldsvs <- grep("SV", names(pheno.orig), value = TRUE)
 pheno[, (oldsvs) := NULL]
 
-
 ## Merge in e4 expression
 pheno[e4_dat, e4_expression := i.e4_expression, on = "protsample"]
 
-
 ## Merge in factor scores, if necessary
 ## Currently assuming there is only one factor
-if(args$run == "latfactor") {
+if(args$analysis == "latfactor") {
     pheno[fac_scores, (factornames) := mget(paste0("i.", factornames)), on = "protsample"]
 }
 
 ## Filter if necessary for this run
-if(args$run == "males") {
+if(args$analysis == "males") {
     pheno <- pheno[msex == 1, ]
 }
 
-if(args$run == "females") {
+if(args$analysis == "females") {
     pheno <- pheno[msex == 0, ]
 }
 
@@ -255,7 +263,6 @@ for (dom in predictors) {
     design <- Build_design(predictors = dom, covariates = covars,
                            pheno_dt = sub_pdat, sample_ids = samples, svs = sv)
 
-    n_model_terms <- ncol(design)
     coef_name <- make.names(dom)
     if (!coef_name %in% colnames(design)) {
         warning("Coefficient ", coef_name, " not estimable; skipping ", dom)
@@ -358,7 +365,7 @@ print(summary_dt)
 
 
 ### Run joint model (basic run only)
-if(args$run == "basic") {
+if(args$analysis == "basic") {
     source(script_run_basic_joint)
 }
 
@@ -370,8 +377,8 @@ message("Done.")
 fwrite(per_domain_dt, file.path(outdir, outfiles$limma_per_domain), sep = "\t")
 fwrite(summary_dt, file.path(outdir, outfiles$summary_dt), sep = "\t")
 
-if(args$run == "basic") {
-    fwrite(joint_per_domain, file.path(outdir, outfiles$joint_per_domain), sep = "\t")
+if(args$analysis == "basic") {
+    fwrite(joint_per_domain, file.path(outdir, outfiles$cond_ind), sep = "\t")
     fwrite(joint_F, file.path(outdir, outfiles$joint_ftest), sep = "\t")
 }
 

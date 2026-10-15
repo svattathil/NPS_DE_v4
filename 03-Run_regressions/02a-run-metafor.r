@@ -24,41 +24,55 @@ source("~/comsv/Svattathil_Library/manhattan_and_qq_plot_functions.r")
 ### Command line arguments
 ## Create parser
 parser <- ArgumentParser()
-parser$add_argument("--run", type="character", default="basic", help = "basic, noSV, severity, or, cond_ind")
+parser <- ArgumentParser(description = "limma DE of log2 protein abundance on NPS domains")
+
+## Control model and sample set
+parser$add_argument("--analysis", default = "basic",
+                    help = paste0("Specify the analysis (e.g., basic, severity, ",
+                                  "males, females, e4_adj, latfactor)"))
+parser$add_argument("--svchoice", default = "noSV",
+                    help = paste0("withSV or noSV"))
 parser$add_argument("--SE_type", type="character", default="SE_mod", help = "SE_mod or SE_unmod")
 
 
 ## Read from parser
 args <- parser$parse_args()
 
+
+## Check arguments
+CheckOptions("analysis", c("basic", "severity", "males", "females", "e4_adj", "latfactor", "cond_ind"))
+CheckOptions("svchoice", c("withSV", "noSV"))
+
+## Define runid
+runid <- paste0(args$analysis, "_", args$svchoice)
+
 ## Define outcomes and subset of cohorts (if necessary)
-if(args$run %in% c("basic", "noSV", "cond_ind",  "e4_adj")) {
+if(args$analysis %in% c("basic", "noSV", "cond_ind",  "e4_adj")) {
     npsvars <- npsvars.bin
 }
 
-if(args$run %in% c("severity")) {
+if(args$analysis %in% c("severity")) {
     npsvars <- npsvars.sev
     cohorts <- c("OHSU", "emory")
 }
 
 
 ### Files that exist
-if(args$run %in% "cond_ind") { ## Used naming that I don't want to propagate
-    resdir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", "Basic", "/")
-    Statsfile <- function(acohort) {  paste0(resdir, acohort, "_joint_perDomain.tsv") }
+if(args$analysis == "cond_ind") {
+    ## the cond_ind analysis is done inside the Basic analysis
+    resdir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", paste0("Basic_", args$svchoice), "/")
+} else {
+    resdir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", Capwords(runid), "/")
 }
 
-if(args$run %in% c("basic", "noSV", "severity")) {
-    resdir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", Capwords(args$run), "/")
-    Statsfile <- function(acohort) {  paste0(resdir, acohort, "_", args$run, ".tsv") }
-}
+Statsfile <- function(cohort) { paste0(resdir, runid, "_", cohort, ".tsv") }
 
 
 ### Files to be created
 outdir <- paste0(resdir, "Metafor/")
 MyMkdir(outdir)
-outfiles <- list(stats = paste0(outdir, "metafor_", args$run, "_using_", args$SE_type, ".txt"),
-                 qq    = paste0(outdir, "metafor_", args$run, "_using_", args$SE_type, "_qqplots.pdf")
+outfiles <- list(stats = paste0(outdir, "metafor_", runid, "_using_", args$SE_type, ".txt"),
+                 qq    = paste0(outdir, "metafor_", runid, "_using_", args$SE_type, "_qqplots.pdf")
                  )
 
 

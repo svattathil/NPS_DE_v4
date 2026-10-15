@@ -20,7 +20,16 @@ print(data.table(domain = npsvars.bin,
 
 ### Estimate SVs and define model
 edat_j   <- expr[, samples_j, drop = FALSE]
-sv_j     <- Estimate_svs(npsvars.bin, sub_j, samples_j)
+
+
+## Estimate SVs and define model
+    if(useSV) {
+        sv_j <- Estimate_svs(npsvars.bin, sub_j, samples_j)
+    } else {
+        message("Running without SVs. ")
+        sv_j <- NULL
+    }
+
 design_j <- Build_design(npsvars.bin, covars, sub_j, samples_j, sv_j)
 
 nps_coefs <- intersect(make.names(npsvars.bin), colnames(design_j))

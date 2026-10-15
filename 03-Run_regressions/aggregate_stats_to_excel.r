@@ -28,16 +28,20 @@ PrintValidValues <- function(an_arg) {
 
 ## Create parser
 parser <- ArgumentParser()
-
-## Active arguments
-parser$add_argument("--run",    type="character", default="basic")
-
+parser$add_argument("--analysis", default = "basic",
+                    help = paste0("Specify the analysis (e.g., basic, severity, ",
+                                  "males, females, e4_adj, latfactor)"))
+parser$add_argument("--svchoice", default = "noSV",
+                    help = paste0("withSV or noSV"))
 ## Read from parser
 args <- parser$parse_args()
 
+## Define runid
+runid <- paste0(args$analysis, "_", args$svchoice)
+
 
 ### Set some values based on the run specifics
-if(args$run == "severity") {
+if(args$analysis == "severity") {
     npsvars <- npsvars.sev
     cohorts <- c("OHSU", "emory")
 } else {
@@ -47,32 +51,27 @@ if(args$run == "severity") {
 
 for(acohort in cohorts) {
     ### Files that exist
-    if(args$run == "cond_ind") {
-        indir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", "Basic", "/")
-        fileid <- paste0(acohort, "_", "joint_perDomain")
-        infiles <- list(
-            limma_per_domain = paste0(indir, fileid, ".tsv")
-        )
+    if(args$analysis == "cond_ind") {
+        ## the cond_ind analysis is done inside the Basic analysis
+        indir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", paste0("Basic_", args$svchoice), "/")
     }
     else {
-        indir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", Capwords(args$run), "/")
-        fileid <- paste0(acohort, "_", args$run)
-
-        infiles <- list(
-            limma_per_domain = paste0(indir, fileid, ".tsv"),
-            summary = paste0(indir, fileid, "_summary.tsv")
-        )
-
+        indir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/", Capwords(runid), "/")
     }
+
+    infiles <- list(
+        limma_per_domain = paste0(indir, runid, "_", acohort, ".tsv"),
+        summary          = paste0(indir, runid, "_summary_", acohort, ".tsv")
+    )
 
 
     ### Files to be created
-    output_file <- paste0(indir, paste(c("stats", args$run, acohort), collapse="_"), ".xlsx")
+    output_file <- paste0(indir, paste(c("stats", runid, acohort), collapse="_"), ".xlsx")
 
 
     ### Read in data
     res <- fread(infiles$limma_per_domain)
-    if(args$run != "cond_ind") {
+    if(args$analysis != "cond_ind") {
         summ_contents <- fread(infiles$summary)
     }
 
@@ -88,7 +87,7 @@ for(acohort in cohorts) {
     ## then one worksheet per NPS
     wb <- createWorkbook()
 
-    if(args$run != "cond_ind") {
+    if(args$analysis != "cond_ind") {
         addWorksheet(wb, sheetName = "summary")
         writeData(wb, sheet = "summary", summ_contents)
     }
