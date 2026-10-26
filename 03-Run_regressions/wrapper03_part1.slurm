@@ -2,7 +2,7 @@
 #SBATCH --job-name=wrapper03_1
 #SBATCH --nodes=1
 #SBATCH --mem=16G
-#SBATCH --array=2-12
+#SBATCH --array=13-14
 #SBATCH --cpus-per-task=1
 #SBATCH --time=0-2:00:00 
 #SBATCH --output=Slurmout/%x-%A_%a.o
@@ -66,7 +66,7 @@ run_limma_script01() {
 ## The second set does not
 if (( SLURM_ARRAY_TASK_ID >= 1 && SLURM_ARRAY_TASK_ID <= 6 )); then
     svchoice="withSV"
-elif (( SLURM_ARRAY_TASK_ID >= 7 && SLURM_ARRAY_TASK_ID <= 12 )); then
+elif (( SLURM_ARRAY_TASK_ID >= 7 && SLURM_ARRAY_TASK_ID <= 14 )); then
     svchoice="noSV"
 else
     echo "Error: SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID} is outside 1-12" >&2
@@ -87,11 +87,11 @@ case $SLURM_ARRAY_TASK_ID in
     
     3|9)
 	analysis=males
-	run_limma_script01 $analysis $svchoice
+	#run_limma_script01 $analysis $svchoice
         ;;
     4|10)
 	analysis=females
-	run_limma_script01 $analysis $svchoice
+	#run_limma_script01 $analysis $svchoice
         ;;
 
     5|11)
@@ -100,6 +100,14 @@ case $SLURM_ARRAY_TASK_ID in
         ;;
     6|12)
 	analysis=latfactor
+	run_limma_script01 $analysis $svchoice
+        ;;
+    13)
+	analysis=males_nocovar
+	run_limma_script01 $analysis $svchoice
+        ;;
+    14)
+	analysis=females_nocovar
 	run_limma_script01 $analysis $svchoice
         ;;
 esac

@@ -24,22 +24,26 @@ source("~/comsv/Svattathil_Library/manhattan_and_qq_plot_functions.r")
 ## Create parser
 parser <- ArgumentParser()
 parser$add_argument("--SE_type", type="character", default="SE_mod", help = "SE_mod or SE_unmod")
-
+parser$add_argument("--svchoice", default = "noSV", help = paste0("withSV or noSV"))
 
 ## Read from parser
 args <- parser$parse_args()
 
+## Check arguments
+CheckOptions("svchoice", c("withSV", "noSV"))
 
 ### Files that exist
-resdir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/Basic/")
-Statsfile <- function(acohort) { paste0(resdir, acohort, "_joint_Ftest.tsv") }
+
+resdir <- paste0("2_Pipeline/03-Run_regressions/Prot_perDomain/Basic_", args$svchoice, "/")
+Statsfile <- function(cohort) { paste0(resdir, "joint_Ftest_", args$svchoice, "_", cohort, ".tsv") }
 
 
 ### Files to be created
 outdir <- paste0(resdir, "Cross-cohort_joint/")
 MyMkdir(outdir)
-outfiles<- list(stats = paste0(outdir, "ftest_cross-cohort_fisher_stouffer.txt"),
-                qq    = paste0(outdir, "ftest_cross-cohort_fisher_stouffer_qqplots.pdf")
+outpref <- paste0("ftest_", args$svchoice, "_cross-cohort_fisher_stouffer")
+outfiles<- list(stats = paste0(outdir, outpref, ".txt"),
+                qq    = paste0(outdir, outpref, "_qqplots.pdf")
                 )
 
 
