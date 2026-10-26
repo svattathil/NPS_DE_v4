@@ -60,7 +60,9 @@ args <- parser$parse_args()
 
 
 ## Check arguments
-CheckOptions("analysis", c("basic", "severity", "males", "females", "e4_adj", "latfactor"))
+CheckOptions("analysis", c("basic", "severity", "males", "females",
+                           "males_nocovar", "females_nocovar",
+                           "e4_adj", "latfactor"))
 CheckOptions("svchoice", c("withSV", "noSV"))
 CheckOptions("cohort", c("OHSU", "rush", "emory"))
 
@@ -148,6 +150,12 @@ if(args$analysis %in% c("males", "females")) {
     fac_covars <- c("Batch")
 }
 
+if(args$analysis %in% c("males_nocovar", "females_nocovar")) {
+    covars <- NULL
+    fac_covars <- NULL
+}
+
+
 if(args$analysis %in% c("e4_adj")) {
     covars <- c("Batch", "pmi", "age_death", "msex", "e4_expression")
     fac_covars <- c("Batch")
@@ -212,20 +220,26 @@ pdat     <- pheno[J(shared)]                 # reordered to match columns
 stopifnot(identical(as.character(pdat[[sample_id_col]]), colnames(expr_all)))
 
 ## Set covars as factors as necessary
-for (nm in fac_covars) pdat[, (nm) := factor(get(nm))]
-
+if(length(fac_covars) > 0) {
+    for (nm in fac_covars) pdat[, (nm) := factor(get(nm))]
+}
 
 ### limma drops samples with missing covariates from every protein, so
 ### remove them once, up front, and report the count
-covar_ok <- pdat[, Reduce(`&`, lapply(.SD, function(v) !is.na(v))), .SDcols = covars]
+if(length(covars) > 0) {
+    covar_ok <- pdat[, Reduce(`&`, lapply(.SD, function(v) !is.na(v))), .SDcols = covars]
+} else {
+    covar_ok <- rep(TRUE, nrow(pdat))
+}
 nps_any  <- pdat[, Reduce(`|`, lapply(.SD, function(v) !is.na(v))), .SDcols = predictors]
 keep_samp <- covar_ok & nps_any
 message("Samples dropped (missing covariate or no NPS observation): ", sum(!keep_samp))
 
 expr_all <- expr_all[, keep_samp, drop = FALSE]
 pdat     <- pdat[keep_samp]
-for (nm in fac_covars) pdat[, (nm) := droplevels(get(nm))]
-
+if(length(fac_covars) > 0) {
+    for (nm in fac_covars) pdat[, (nm) := droplevels(get(nm))]
+}
 
 ### Filter to proteins that pass missingness threshold
 nonmiss_count <- rowSums(!is.na(expr_all))
