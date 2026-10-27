@@ -6,11 +6,10 @@ library(qvalue)
 rm(list = ls())
 
 
-
 ###### GOAL ######
 ## Test association of consensus module eigengenes with NPS domains,
 ## using eigengenes already written by 03-build_consensus_network.r
-## (does NOT rebuild modules). Eigengene is the outcome in all models.
+## Eigengene is the outcome in all models.
 ##   (1) each NPS separately (linear regression):
 ##         mod.eigen ~ NPS + covariates
 ##   (2) all NPS jointly (partial F-test):
@@ -23,6 +22,8 @@ rm(list = ls())
 ##### CONSTANTS #####
 options(stringsAsFactors = FALSE)
 source("1_Code/project_constants.r")
+source("~/comsv/Svattathil_Library/svattathil_functions.r")
+source("~/comsv/Svattathil_Library/manhattan_and_qq_plot_functions.r")
 
 nps <- npsvars.bin
 
@@ -32,8 +33,8 @@ parser <- ArgumentParser()
 parser$add_argument("--auto_softpower", type="integer", default=9, help="")
 parser$add_argument("--use_powervec1", action="store_true", default=FALSE, help="")
 parser$add_argument("--residset", type="character", default="ignoreSVs", help="")
-parser$add_argument("--covars", type="character", nargs="*", default="msex",
-                    help=paste0("Covariates for all association models (default: msex). ",
+parser$add_argument("--covars", type="character", nargs="*", default="",
+                    help=paste0("Covariates for all association models. ",
                                 "Use 'none' or give no values for NPS-only models."))
 parser$add_argument("--stouffer_weights", type="character", default="sqrtN",
                     choices=c("sqrtN", "equal"),
@@ -55,7 +56,6 @@ outtag <- if(length(covars) > 0) paste0("covar", sapply(covars, Capwords)) else 
 
 
 ###### FUNCTIONS ######
-source("~/comsv/Svattathil_Library/manhattan_and_qq_plot_functions.r")
 
 PrepareDataME <- function(modulename, aphenodata, amedata) {
     ## Extract eigengene for current module and add protsample as column
@@ -173,10 +173,12 @@ if(length(missing_files) > 0) {
 
 ### Files to be created
 outfiles <- list()
-outfiles[["regression"]]  <- paste0(Netfilepref, outtag, "_nps_linear_regression_results_per-cohort.txt")
-outfiles[["joint_Ftest"]] <- paste0(Netfilepref, outtag, "_nps_joint_partialF_results_per-cohort.txt")
-outfiles[["stouffer"]]    <- paste0(Netfilepref, outtag, "_nps_joint_partialF_results_stouffer.txt")
-outfiles[["qq_stouffer"]] <- paste0(Netfilepref, outtag, "_nps_joint_partialF_results_stouffer_qqplot.pdf")
+outfiles[["regression"]]     <- paste0(Netfilepref, outtag, "_nps_linear_regression_results_per-cohort.txt")
+outfiles[["qq_per-domain"]]  <- paste0(Netfilepref, outtag, "_nps_linear_regression_results_per-cohort_qqplots.pdf")
+outfiles[["joint_Ftest"]]    <- paste0(Netfilepref, outtag, "_nps_joint_partialF_results_per-cohort.txt")
+outfiles[["qq_joint_Ftest"]] <- paste0(Netfilepref, outtag, "_nps_joint_partialF_results_per-cohort_qqplots.pdf")
+outfiles[["stouffer"]]       <- paste0(Netfilepref, outtag, "_nps_joint_partialF_results_stouffer.txt")
+outfiles[["qq_stouffer"]]    <- paste0(Netfilepref, outtag, "_nps_joint_partialF_results_stouffer_qqplot.pdf")
 
 
 ###### MAIN ######
@@ -242,6 +244,23 @@ for(acohort in cohorts) {
     }
 rm(acohort)
 
+
+##  Draw qq plots
+qq_perdomain <- sapply(cohorts, function(acohort) {
+    ## calculate inflation factor
+    chisq.all <- qchisq(allsumms_list2[[acohort]][, Pvalue], 1, lower.tail=FALSE)
+    lambda.median.all <- median(chisq.all) / qchisq(0.5,1)
+    lambdatext.all <- bquote(lambda ~ '=' ~ .(signif(lambda.median.all, 4)))
+
+    ## Draw plot
+    n.na <- sum(is.na(allsumms_list2[[acohort]]$Pvalue))
+    titleqq <- paste0(acohort, " - per-domain tests \n (one point per module*BPSD)")
+    qq_stouffer <- qqunif.plot(allsumms_list2[[acohort]][!is.na(Pvalue), Pvalue],
+                               maintitle=titleqq, subxlab=lambdatext.all,
+                               par.settings=list(par.sub.text=list(cex=1)))
+}, simplify = FALSE)
+
+
 ## Flatten: across cohorts (long format)
 allsumms_long <- rbindlist(allsumms_list2, idcol = "cohort")
 setorder(allsumms_long, eigengene, NPS)
@@ -260,9 +279,39 @@ jointsumms_list <- sapply(cohorts, function(acohort) {
                      covars     = covars))
 }, simplify = FALSE)
 
+## Add multiple testing correction and sig columns (within each cohort)
+for(acohort in cohorts) {
+    jointsumms_list[[acohort]][, p.BH := p.adjust(Pvalue, method = "BH")]
+    jointsumms_list[[acohort]][, p.bonf := p.adjust(Pvalue, method = "bonferroni")]
+
+    jointsumms_list[[acohort]][Pvalue < 0.05, sig_nominal05 := "sig_nominal05"]
+    jointsumms_list[[acohort]][p.BH < 0.05, sig_BH05 := "sig_BH05"]
+    jointsumms_list[[acohort]][p.bonf < 0.05, sig_bonf05 := "sig_bonf05"]
+}
+rm(acohort)
+
+
+##  Draw qq plots
+qq_joint_Ftest <- sapply(cohorts, function(acohort) {
+
+    ## calculate inflation factor
+    chisq.all <- qchisq(jointsumms_list[[acohort]][, Pvalue], 1, lower.tail=FALSE)
+    lambda.median.all <- median(chisq.all) / qchisq(0.5,1)
+    lambdatext.all <- bquote(lambda ~ '=' ~ .(signif(lambda.median.all, 4)))
+
+    ## Draw plot
+    n.na <- sum(is.na(jointsumms_list[[acohort]]$Pvalue))
+    titleqq <- paste0(acohort, " - partial F-test \n (one point per module)")
+    qq_stouffer <- qqunif.plot(jointsumms_list[[acohort]][!is.na(Pvalue), Pvalue],
+                               maintitle=titleqq, subxlab=lambdatext.all,
+                               par.settings=list(par.sub.text=list(cex=1)))
+}, simplify = FALSE)
+
+
+## Combine into single table (aggregate across cohorts)
 jointsumms_long <- rbindlist(jointsumms_list, idcol = "cohort")
 jointsumms_long[, NPS := "all_NPS"]
-setorder(jointsumms_long, eigengene, cohort)
+setorder(jointsumms_long, Pvalue, eigengene, cohort)
 setcolorder(jointsumms_long, c("eigengene", "NPS", "cohort"))
 
 
@@ -279,7 +328,9 @@ setorder(stouffer_summ, Pvalue)
 
 ## Add multiple testing correction and sig columns
 stouffer_summ[Pvalue < 0.05, sig_p05 := "sig_nominal05"]
+stouffer_summ[, p.BH := p.adjust(Pvalue, method = "BH")]
 stouffer_summ[, p.bonf := p.adjust(Pvalue, method = "bonferroni")]
+stouffer_summ[p.BH < 0.05, sig_BH05 := "sig_BH05"]
 stouffer_summ[p.bonf < 0.05, sig_bonf05 := "sig_bonf05"]
 
 
@@ -305,7 +356,16 @@ write.table(jointsumms_long, file = outfiles[["joint_Ftest"]],
 write.table(stouffer_summ,   file = outfiles[["stouffer"]],
             row.names = FALSE, quote = FALSE, sep = "\t")
 
+pdf(outfiles[["qq_per-domain"]], height = 7, width = 7)
+for(x in qq_perdomain) { print(x) }
+dev.off()
+
+
+pdf(outfiles[["qq_joint_Ftest"]], height = 7, width = 7)
+for(x in qq_joint_Ftest) { print(x) }
+dev.off()
 
 pdf(outfiles[["qq_stouffer"]], height = 7, width = 7)
 print(qq_stouffer)
 dev.off()
+

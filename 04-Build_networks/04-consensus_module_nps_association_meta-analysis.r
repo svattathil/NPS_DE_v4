@@ -15,13 +15,14 @@ cohorts <- c("OHSU", "rush", "emory")
 
 ###### FUNCTIONS ######
 source("~/comsv/Svattathil_Library/svattathil_functions.r")
+source("~/comsv/Svattathil_Library/manhattan_and_qq_plot_functions.r")
 
 
 ##### COMMAND LINE ARGUMENTS #####
 ## Create parser
 parser <- ArgumentParser()
 parser$add_argument("--auto_softpower", type="integer", default=9, help="")
-parser$add_argument("--residset", type="character", default="regressSVs", help="")
+parser$add_argument("--residset", type="character", default="ignoreSVs", help="")
 parser$add_argument("--outtag", type="character", default="",
                     help=paste0("Optional tag to identify input files for desired run"))
 
@@ -40,7 +41,9 @@ infiles <- list(res = paste0(indir, fileid, "_nps_linear_regression_results_per-
 
 
 ### Files to be created
-outfiles <- list(fe_results = paste0(indir, fileid, "_nps_regression_results_meta.txt"))
+outfiles <- list(fe_results = paste0(indir, fileid, "_nps_regression_results_meta.txt"),
+                 qq         = paste0(indir, fileid, "_nps_regression_results_meta_qqplot.pdf")
+                 )
 
 
 ###### MAIN ######
@@ -81,6 +84,26 @@ fe_results[, p.bonf := p.adjust(fe_p, method = "bonferroni")]
 fe_results[, sig.qvalue05 := ifelse(qvalue < 0.05, TRUE, FALSE)]
 
 
+### Draw QQ plot
+## calculate inflation factor
+chisq.all <- qchisq(fe_results[, fe_p], 1, lower.tail=FALSE)
+lambda.median.all <- median(chisq.all) / qchisq(0.5,1)
+lambdatext.all <- bquote(lambda ~ '=' ~ .(signif(lambda.median.all, 4)))
+
+
+##  Draw qq plot
+n.na <- sum(is.na(fe_results$fe_p))
+titleqq <- paste0("Cross-cohort fixed-effects meta-analysis of module-BPSD associations\n",
+                  "(one point per module*BPSD")
+qq_fe <- qqunif.plot(fe_results[!is.na(fe_p), fe_p],
+                     maintitle=titleqq, subxlab=lambdatext.all,
+                     par.settings=list(par.sub.text=list(cex=1)))
+
+
 ###### FINISH ######
 write.table(fe_results, file = outfiles[["fe_results"]],
             row.names = FALSE, quote = FALSE, sep = "\t")
+
+pdf(outfiles$qq)
+print(qq_fe)
+dev.off()
