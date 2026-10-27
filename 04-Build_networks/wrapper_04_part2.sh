@@ -99,20 +99,32 @@ Rscript $scriptdir/02-make_list_of_shared_genes.r
 
 ## 3. Build consensus network using one-step function
 ### Run in interactive session
-scriptfile3=$scriptdir/03-build_consensus_network.r
+scriptfile3a=$scriptdir/03a-build_consensus_network.r
+
+
 scriptfile4=$scriptdir/04-consensus_module_nps_association_meta-analysis.r
 scriptfile5=$scriptdir/05-extract_significant_consensus_module_NPS_associations.r
 
 residset=ignoreSVs
-for softpower in 7 8 9
+for softpower in 9
 do
-    ## Build consensus network and run per-cohort NPS association
-    Rscript $scriptfile3 --auto_softpower $softpower --residset $residset
+    ## Build consensus network
+    Rscript $scriptfile3a --auto_softpower $softpower --residset $residset
 
+    ## Test NPS association
+    Rscript $scriptfile3b --auto_softpower $softpower --residset $residset \
+	    --covars msex
+
+    Rscript $scriptfile3b --auto_softpower $softpower --residset $residset \
+	    --covars none
+    
     ## Do meta-analysis for NPS association
-    Rscript $scriptfile4 --auto_softpower $softpower
-
+    Rscript $scriptfile4 --auto_softpower $softpower --residset $residset --outtag covarMsex
+    Rscript $scriptfile4 --auto_softpower $softpower --residset $residset 
+    
     ## Extract significant associations
-    Rscript $scriptfile5 --auto_softpower $softpower
+    Rscript $scriptfile5 --auto_softpower $softpower--residset $residset --outtag covarMsex
+    Rscript $scriptfile5 --auto_softpower $softpower--residset $residset
 done
+
 

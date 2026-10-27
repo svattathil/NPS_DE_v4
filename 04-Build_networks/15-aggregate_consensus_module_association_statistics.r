@@ -20,7 +20,8 @@ npsmap <- data.table(code_name = npsvars.bin, text_name = names(npsvars.bin))
 ## Create parser
 parser <- ArgumentParser()
 parser$add_argument("--auto_softpower", type="integer", default=9, help="")
-parser$add_argument("--residset", type="character", default="regressSVs", help="")
+parser$add_argument("--residset", type="character", default="ignoreSVs", help="")
+parser$add_argument("--outtag", type="character", default="", help="")
 
 ## Read from parser
 args <- parser$parse_args()
@@ -34,14 +35,14 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 ###### SETUP ######
 ### Files that exist
 ### module eigengene ~ NPS association statistics
+dir1 <- paste0("2_Pipeline/04-Build_networks/Using_", args$residset, "/Consensus/",
+                "Auto_softpower", args$auto_softpower, "/")
 
-dir1 <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/",
-                stringr::str_to_title(paste0(args$residset, "_Auto_softpower",
-                                             args$auto_softpower)), "/")
 
 dir_npsassoc <- dir1
-fileid <- paste0(args$residset, "_auto_softpower", args$auto_softpower)
-infiles_npsassoc <- list(per_cohort = paste0(dir1, fileid, "_nps_regression_results_per-cohort.txt"),
+fileid <- paste0("auto_softpower", args$auto_softpower)
+if(args$outtag != "") { fileid <- paste0(fileid, "_", args$outtag) }
+infiles_npsassoc <- list(per_cohort = paste0(dir1, fileid, "_nps_linear_regression_results_per-cohort.txt"),
                         meta       = paste0(dir1, fileid, "_nps_regression_results_meta.txt"))
 
 
@@ -49,14 +50,14 @@ infiles_npsassoc <- list(per_cohort = paste0(dir1, fileid, "_nps_regression_resu
 dir_lfassoc <- paste0(dir1, "DEA_latent_factors/")
 infiles_lfassoc <- sapply(cohorts, function(acohort) {
     paste0(dir_lfassoc,
-           fileid, "_", acohort, "_eigengene_regress_stats_latent_factors.txt")
+           fileid, "_eigengene_regress_stats_latent_factors_", acohort, ".txt")
 }, simplify = FALSE)
 
 
 ### module eigengene ~ multivariate association statistics
 dir_multassoc <- paste0(dir1, "Multivariate/")
 infiles_multassoc <- sapply(cohorts, function(acohort) {
-    paste0(dir_multassoc, "eigengene_multivar_", fileid, "_", acohort, "_regression_stats.txt")
+    paste0(dir_multassoc, "eigengene_multivar_", acohort, "_regression_stats.txt")
 }, simplify = FALSE)
 
 
@@ -112,6 +113,7 @@ formerge[["nps_assoc_percohort"]] <- data.table::dcast(tmp, module_color + NPS ~
 ordered_valcols <- paste0(rep(valcols, times = length(cohorts)), "_",
                           rep(cohorts, each = length(valcols)))
 setcolorder(formerge[["nps_assoc_percohort"]], c(idcols, ordered_valcols))
+rm(tmp)
 
 
 ### Prepare meta-analysis statistics for module ~ NPS association
@@ -120,13 +122,10 @@ setnames(res_npsassoc_meta, c("module", "fe_beta", "fe_se", "fe_p"),
 
 formerge[["nps_assoc_meta"]] <- res_npsassoc_meta[, c(idcols, valcols, "fe_I2"), with = FALSE]
 
+
 ### Merge into final table
 forprint_nps <- merge(formerge[["nps_assoc_percohort"]], formerge[["nps_assoc_meta"]],
                       by = idcols, all = TRUE)
-forprint_nps <- merge(forprint_nps, npsmap, by.x = "NPS", by.y = "code_name")
-forprint_nps[, NPS := text_name]
-forprint_nps[, text_name := NULL]
-
 
 #### 2. Prepare table for latent factor and multivariate associations ####
 ####    One row per module                                            ####

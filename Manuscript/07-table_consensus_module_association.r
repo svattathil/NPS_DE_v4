@@ -26,7 +26,7 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 
 
 ### Files that exist
-indir <- "2_Pipeline/04-Build_networks/Wgcna_out/Consensus/Auto_softpower9/"
+indir <- "2_Pipeline/04-Build_networks/Using_ignoreSVs/Consensus/Auto_softpower9/"
 infiles <- list()
 infiles[["module_counts"]] <- paste0(indir, "auto_softpower9_module_protein_counts.txt")
 infiles[["kme"]] <- paste0(indir, "auto_softpower9_mean_kME.txt")
@@ -37,7 +37,7 @@ infiles[["enrichment"]] <- paste0(indir,
                                   "pthresh1_gene_set_enrichment.xlsx")
 infiles[["sig_latfac"]] <- sapply(cohorts, function(acohort) {
     paste0(indir, "DEA_latent_factors/",
-           "auto_softpower9_", acohort, "_associated_modules_latent_factors.txt") })
+           "auto_softpower9_associated_modules_latent_factors_", acohort, ".txt") })
 infiles[["multi"]] <- sapply(cohorts, function(acohort) {
     paste0(indir, "Multivariate/",
            "eigengene_multivar_", acohort, "_regression_stats.txt") })
@@ -108,12 +108,11 @@ forbind[["top_hub_genes"]] <- kme[kME_avg > 0.7,
 ### Prepare associations
 ## First get per-cohort NPS associations
 setnames(sig_nps, "NPS", "nps")
-sig_nps <- merge(sig_nps, nps_map, by = "nps")
 
 sigstrings_by_cohort <- list()
 sigstrings_by_cohort[["nps"]] <-
     sapply(cohorts, function(acohort) {
-        tmp <- sig_nps[cohort == acohort,  paste0(nps_text, collapse = ", "), by = c("module")]
+        tmp <- sig_nps[cohort == acohort,  paste0(nps, collapse = ", "), by = c("module")]
         setnames(tmp, "V1", paste0("sig_nps_", acohort))
         return(tmp)
     }, simplify = FALSE)
@@ -122,7 +121,7 @@ sigstrings_by_cohort[["nps"]] <-
 ## Then get per-cohort latent factor associations
 ## rename MR1 to Factor 1, MR2 to Factor 2, etc.
 sigstrings_by_cohort[["factor"]] <- sapply(cohorts, function(acohort) {
-    sig_latfac_list[[acohort]][, latentfactor_sig05 := gsub("MR", "latent factor ", latentfactor_sig05)]
+    sig_latfac_list[[acohort]][, latentfactor_sig05 := gsub("f", "latent factor ", latentfactor_sig05)]
     sig_latfac_list[[acohort]][, cohort := acohort]
 
     sigres <- sig_latfac_list[[acohort]][grep("actor", latentfactor_sig05),
@@ -167,7 +166,7 @@ forprint <- MergeRes(forbind)
 
 
 ## Add multivariate associations
-forbind[["meta"]] <- sig_nps[fe_p < 0.05, paste0(nps_text, collapse = ", "), by = "module"]
+forbind[["meta"]] <- sig_nps[fe_p < 0.05, paste0(nps, collapse = ", "), by = "module"]
 setnames(forbind[["meta"]], "V1", "assoc_meta")
 
 forprint <- merge(forprint, forbind[["meta"]], by = "module", all = TRUE)

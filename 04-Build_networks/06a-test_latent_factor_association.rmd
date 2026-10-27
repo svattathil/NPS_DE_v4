@@ -122,10 +122,9 @@ if(args$network_set == "cohort-specific") {
 }
 
 if(args$network_set == "consensus") {
-    indir <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/",
-                stringr::str_to_title(paste0(args$residset, "_Auto_softpower",
-                                             args$auto_softpower)), "/")
-    runid <- paste0(args$residset, "_auto_softpower", args$auto_softpower, "_", args$cohort)
+    indir <- paste0("2_Pipeline/04-Build_networks/Using_", args$residset, "/Consensus/",
+             "_Auto_softpower", args$auto_softpower, "/")
+    runid <- paste0("auto_softpower", args$auto_softpower, "_", args$cohort)
     
 }
 
@@ -247,7 +246,8 @@ for(afactor in factor_names) {
     regression.results <- lapply(mes_to_test, function(amodule) {
         ## Prepare regression data
         ## Combine eigengenes with other necessary phenos
-        regression_data <- merge(eigengenes[, c("protsample", amodule), with = FALSE], phenos, by = "protsample")
+        regression_data <- merge(eigengenes[, c("protsample", amodule), with = FALSE],
+                                 phenos, by = "protsample")
         setnames(regression_data, amodule, "mod.eigen") ## rename eigengene column to generic name
         
         ## Convert to data frame and add protsample as rownames
@@ -457,7 +457,8 @@ for(afactor in factor_names) {
     regression.results <- lapply(mes_to_test, function(amodule) {
         ## Prepare regression data
         ## Combine eigengenes with other necessary phenos
-        regression_data <- merge(eigengenes[, c("protsample", amodule), with = FALSE], phenos, by = "protsample")
+        regression_data <- merge(eigengenes[, c("protsample", amodule), with = FALSE],
+                                 phenos, by = "protsample")
         setnames(regression_data, amodule, "mod.eigen") ## rename eigengene column to generic name
         
         ## Convert to data frame and add protsample as rownames
@@ -474,7 +475,8 @@ for(afactor in factor_names) {
 
     
     ## Summarize results for this outcome
-    regression.summ <- data.frame(t(sapply(regression.results, GetStats, modelfamily = vartype, var = "mod.eigen")))
+    regression.summ <- data.frame(t(sapply(regression.results, GetStats,
+                                           modelfamily = vartype, var = "mod.eigen")))
     rownames(regression.summ) <- mes_to_test
 
     ## Clean up
@@ -630,7 +632,8 @@ for(afactor in factor_names) {
     regression.results <- lapply(mes_to_test, function(amodule) {
         ## Prepare regression data
         ## Combine eigengenes with other necessary phenos
-        regression_data <- merge(eigengenes[, c("protsample", amodule), with = FALSE], phenos, by = "protsample")
+        regression_data <- merge(eigengenes[, c("protsample", amodule), with = FALSE],
+                                 phenos, by = "protsample")
         setnames(regression_data, amodule, "mod.eigen") ## rename eigengene column to generic name
         
         ## Convert to data frame and add protsample as rownames
@@ -646,7 +649,8 @@ for(afactor in factor_names) {
 
     
     ## Summarize results for this outcome
-    regression.summ <- data.frame(t(sapply(regression.results, GetStats, modelfamily = vartype, var = afactor)))
+    regression.summ <- data.frame(t(sapply(regression.results, GetStats,
+                                           modelfamily = vartype, var = afactor)))
     rownames(regression.summ) <- mes_to_test
 
     ## Clean up

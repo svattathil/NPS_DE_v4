@@ -22,20 +22,22 @@ source("~/comsv/Svattathil_Library/svattathil_functions.r")
 ### Command line arguments
 ## Create parser
 parser <- ArgumentParser()
-parser$add_argument("--residset", type="character", default="regressSVs", help="")
+parser$add_argument("--residset", type="character", default="ignoreSVs", help="")
 parser$add_argument("--auto_softpower", type = "integer", help = "", default = 9)
+parser$add_argument("--outtag", type = "character", help = "", default = "")
+
 
 ## Read from parser
 args <- parser$parse_args()
 
 
 ### Files that exist
-indir <- paste0("2_Pipeline/04-Build_networks/Wgcna_out/Consensus/",
-                stringr::str_to_title(paste0(args$residset, "_Auto_softpower",
-                                             args$auto_softpower)), "/")
+indir <- paste0("2_Pipeline/04-Build_networks/Using_", args$residset, "/Consensus/",
+                "Auto_softpower", args$auto_softpower, "/")
 
-fileid <- paste0(args$residset, "_auto_softpower", args$auto_softpower)
-infiles <- list(specific = paste0(indir, fileid, "_nps_regression_results_per-cohort.txt"),
+fileid <- paste0("auto_softpower", args$auto_softpower)
+if(args$outtag != "") { fileid <- paste0(fileid, "_", args$outtag) }
+infiles <- list(specific = paste0(indir, fileid, "_nps_linear_regression_results_per-cohort.txt"),
                 meta     = paste0(indir, fileid, "_nps_regression_results_meta.txt"))
 
 
