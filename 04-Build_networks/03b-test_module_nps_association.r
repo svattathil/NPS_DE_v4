@@ -38,7 +38,8 @@ parser$add_argument("--covars", type="character", nargs="*", default="",
                                 "Use 'none' or give no values for NPS-only models."))
 parser$add_argument("--stouffer_weights", type="character", default="sqrtN",
                     choices=c("sqrtN", "equal"),
-                    help="Weights for Stouffer combination of per-cohort F-test p-values (default: sqrtN)")
+                    help=paste0("Weights for Stouffer combination of per-cohort",
+                                "F-test p-values (default: sqrtN)"))
 
 args <- parser$parse_args()
 
@@ -57,6 +58,53 @@ outtag <- if(length(covars) > 0) paste0("covar", sapply(covars, Capwords)) else 
 
 ###### FUNCTIONS ######
 
+Drawqq <- function(pvalvec, titleqq) {
+    ## calculate inflation factor
+    chisq.all <- qchisq(pvalvec, 1, lower.tail=FALSE)
+    lambda.median.all <- median(chisq.all) / qchisq(0.5,1)
+    lambdatext.all <- bquote(lambda ~ '=' ~ .(signif(lambda.median.all, 4)))
+
+
+    ##  Draw qq plot
+    n.na <- sum(is.na(pvalvec))
+    qqunif.plot(stouffer_summ[!is.na(Pvalue), Pvalue],
+                maintitle=titleqq, subxlab=lambdatext.all,
+                par.settings=list(par.sub.text=list(cex=1)))
+}
+
+MakeFormula <- function(predictors, response = "mod.eigen") {
+    ## reformulate() fails on an empty predictor vector; use intercept-only instead
+    if(length(predictors) == 0) predictors <- "1"
+    reformulate(predictors, response = response)
+}
+
+PoolNPSFixed <- function(fits, nps) {
+    k <- length(nps)
+    P_tot <- matrix(0, k, k, dimnames = list(nps, nps))
+    Pb_tot <- setNames(numeric(k), nps)
+    parts <- lapply(fits, function(f) {
+        b <- coef(f)[nps]; V <- vcov(f)[nps, nps, drop = FALSE]   # NA rows for aliased terms
+        obs <- !is.na(b)
+        P <- matrix(0, k, k, dimnames = list(nps, nps))
+        P[obs, obs] <- solve(V[obs, obs, drop = FALSE])
+        list(b = replace(b, !obs, 0), P = P, rank = sum(obs), df = df.residual(f))
+    })
+    for(p in parts) { P_tot <- P_tot + p$P; Pb_tot <- Pb_tot + p$P %*% p$b }
+    V_pool <- solve(P_tot)
+    beta   <- drop(V_pool %*% Pb_tot)
+    W      <- drop(t(beta) %*% P_tot %*% beta)
+    Q      <- sum(sapply(parts, function(p) drop(t(p$b - beta) %*% p$P %*% (p$b - beta))))
+    Q_df   <- sum(sapply(parts, `[[`, "rank")) - k
+    list(per_NPS = data.table(NPS = nps, Estimate = beta, Std.Err = sqrt(diag(V_pool)),
+                              Pvalue = 2 * pnorm(-abs(beta / sqrt(diag(V_pool))))),
+         joint   = data.table(Wald_chisq = W, df = k, Pvalue = pchisq(W, k, lower.tail = FALSE),
+                              F_approx = W / k,
+                              Pvalue_F = pf(W / k, k, sum(sapply(parts, `[[`, "df")),
+                                            lower.tail = FALSE),
+                              Q_het = Q, Q_df = Q_df,
+                              Q_Pvalue = pchisq(Q, Q_df, lower.tail = FALSE)))
+}
+
 PrepareDataME <- function(modulename, aphenodata, amedata) {
     ## Extract eigengene for current module and add protsample as column
     mes.to.merge <- data.frame(protsample=rownames(amedata),
@@ -72,10 +120,32 @@ PrepareDataME <- function(modulename, aphenodata, amedata) {
     return(merged)
 }
 
-MakeFormula <- function(predictors, response = "mod.eigen") {
-    ## reformulate() fails on an empty predictor vector; use intercept-only instead
-    if(length(predictors) == 0) predictors <- "1"
-    reformulate(predictors, response = response)
+RunJointNPSTest <- function(amodule, aphenodata, amedata, nps, covars) {
+    ## Partial F-test of all NPS domains jointly for one module
+    ## Full:    mod.eigen ~ covars + NPS_1 + ... + NPS_k
+    ## Reduced: mod.eigen ~ covars   (intercept-only if no covariates)
+    ## H0: all NPS coefficients = 0 (conditional on covariates)
+    regression_data <- PrepareDataME(amodule, aphenodata, amedata)
+
+    ## Restrict to complete cases across eigengene, covariates, and ALL NPS
+    ## so both models are fit to identical samples (required for the F-test)
+    keepvars <- c("mod.eigen", covars, nps)
+    regression_data <- regression_data[complete.cases(regression_data[, keepvars]),
+                                       keepvars, drop = FALSE]
+
+    fit_reduced <- lm(MakeFormula(covars), data = regression_data)
+    fit_full    <- lm(MakeFormula(c(covars, nps)), data = regression_data)
+    ftest <- anova(fit_reduced, fit_full)
+
+    summtab <- data.table(eigengene  = amodule,
+               Fstat      = ftest[2, "F"],
+               df_num     = ftest[2, "Df"],  ## taken from anova, so robust to aliased terms
+               df_den     = ftest[2, "Res.Df"],
+               N          = nrow(regression_data),
+               partial_R2 = (ftest[1, "RSS"] - ftest[2, "RSS"]) / ftest[1, "RSS"],
+               Pvalue     = ftest[2, "Pr(>F)"])
+
+    return(list(fit_full = fit_full, summtab = summtab))
 }
 
 RunPerNPSTest <- function(amodule, anps, aphenodata, amedata, covars) {
@@ -83,7 +153,8 @@ RunPerNPSTest <- function(amodule, anps, aphenodata, amedata, covars) {
     ## mod.eigen ~ NPS + covars
     regression_data <- PrepareDataME(amodule, aphenodata, amedata)
     keepvars <- c("mod.eigen", anps, covars)
-    regression_data <- regression_data[complete.cases(regression_data[, keepvars]), keepvars, drop = FALSE]
+    regression_data <- regression_data[complete.cases(regression_data[, keepvars]),
+                                       keepvars, drop = FALSE]
 
     fit <- lm(MakeFormula(c(anps, covars)), data = regression_data)
     coefs <- summary(fit)$coefficients
@@ -104,37 +175,13 @@ RunPerNPSTest <- function(amodule, anps, aphenodata, amedata, covars) {
                Pvalue    = res[4])
 }
 
-RunJointNPSTest <- function(amodule, aphenodata, amedata, nps, covars) {
-    ## Partial F-test of all NPS domains jointly for one module
-    ## Full:    mod.eigen ~ covars + NPS_1 + ... + NPS_k
-    ## Reduced: mod.eigen ~ covars   (intercept-only if no covariates)
-    ## H0: all NPS coefficients = 0 (conditional on covariates)
-    regression_data <- PrepareDataME(amodule, aphenodata, amedata)
-
-    ## Restrict to complete cases across eigengene, covariates, and ALL NPS
-    ## so both models are fit to identical samples (required for the F-test)
-    keepvars <- c("mod.eigen", covars, nps)
-    regression_data <- regression_data[complete.cases(regression_data[, keepvars]), keepvars, drop = FALSE]
-
-    fit_reduced <- lm(MakeFormula(covars), data = regression_data)
-    fit_full    <- lm(MakeFormula(c(covars, nps)), data = regression_data)
-    ftest <- anova(fit_reduced, fit_full)
-
-    data.table(eigengene  = amodule,
-               Fstat      = ftest[2, "F"],
-               df_num     = ftest[2, "Df"],        ## taken from anova, so robust to aliased terms
-               df_den     = ftest[2, "Res.Df"],
-               N          = nrow(regression_data),
-               partial_R2 = (ftest[1, "RSS"] - ftest[2, "RSS"]) / ftest[1, "RSS"],
-               Pvalue     = ftest[2, "Pr(>F)"])
-}
-
 StoufferCombine <- function(pvals, N, weighting = "sqrtN") {
     ## Combine one-sided p-values (F-test p-values are upper-tail by construction)
     ## Z_i = qnorm(1 - p_i);  Z = sum(w_i * Z_i) / sqrt(sum(w_i^2))
     keep <- !is.na(pvals)
     pvals <- pvals[keep]; N <- N[keep]
-    if(length(pvals) == 0) return(list(Z = NA_real_, Pvalue = NA_real_, n_cohorts = 0L, N_total = 0L))
+    if(length(pvals) == 0) return(list(Z = NA_real_, Pvalue = NA_real_,
+                                       n_cohorts = 0L, N_total = 0L))
 
     ## Keep p strictly inside (0, 1) so Z is finite
     pvals <- pmin(pmax(pvals, .Machine$double.xmin), 1 - .Machine$double.eps)
@@ -173,12 +220,22 @@ if(length(missing_files) > 0) {
 
 ### Files to be created
 outfiles <- list()
-outfiles[["regression"]]     <- paste0(Netfilepref, outtag, "_nps_linear_regression_results_per-cohort.txt")
-outfiles[["qq_per-domain"]]  <- paste0(Netfilepref, outtag, "_nps_linear_regression_results_per-cohort_qqplots.pdf")
-outfiles[["joint_Ftest"]]    <- paste0(Netfilepref, outtag, "_nps_joint_partialF_results_per-cohort.txt")
-outfiles[["qq_joint_Ftest"]] <- paste0(Netfilepref, outtag, "_nps_joint_partialF_results_per-cohort_qqplots.pdf")
-outfiles[["stouffer"]]       <- paste0(Netfilepref, outtag, "_nps_joint_partialF_results_stouffer.txt")
-outfiles[["qq_stouffer"]]    <- paste0(Netfilepref, outtag, "_nps_joint_partialF_results_stouffer_qqplot.pdf")
+outfiles[["regression"]]     <- paste0(Netfilepref, outtag,
+                                       "_nps_linear_regression_results_per-cohort.txt")
+outfiles[["qq_per-domain"]]  <- paste0(Netfilepref, outtag,
+                                       "_nps_linear_regression_results_per-cohort_qqplots.pdf")
+outfiles[["joint_Ftest"]]    <- paste0(Netfilepref, outtag,
+                                       "_nps_joint_partialF_results_per-cohort.txt")
+outfiles[["qq_joint_Ftest"]] <- paste0(Netfilepref, outtag,
+                                       "_nps_joint_partialF_results_per-cohort_qqplots.pdf")
+outfiles[["stouffer"]]       <- paste0(Netfilepref, outtag,
+                                       "_nps_joint_partialF_results_stouffer.txt")
+outfiles[["jointmeta"]]      <- paste0(Netfilepref, outtag,
+                                       "_nps_joint_partialF_results_meta.txt")
+outfiles[["qq_stouffer"]]    <- paste0(Netfilepref, outtag,
+                                       "_nps_joint_partialF_results_stouffer_qqplot.pdf")
+outfiles[["qq_jointmeta"]]   <- paste0(Netfilepref, outtag,
+                                       "_nps_joint_partialF_results_meta_qqplot.pdf")
 
 
 ###### MAIN ######
@@ -204,7 +261,8 @@ phenos_list <- sapply(cohorts, function(acohort) {
 for(acohort in cohorts) {
     missing_vars <- setdiff(c("protsample", covars, nps), names(phenos_list[[acohort]]))
     if(length(missing_vars) > 0) {
-        stop("Cohort ", acohort, " phenotype file missing: ", paste(missing_vars, collapse = ", ")) }
+        stop("Cohort ", acohort, " phenotype file missing: ",
+             paste(missing_vars, collapse = ", ")) }
 
     for(anps in nps) {
         if(is.logical(phenos_list[[acohort]][[anps]])) {
@@ -214,12 +272,16 @@ for(acohort in cohorts) {
     }
 }
 
+### Get modules to test (i.e., exclude grey)
+## Since we are using consensus modules, all cohorts have exactly the same modules
+## so just take the names from the first cohort
+testmodules <- setdiff(colnames(MEs_per_cohort[[1]]), "MEgrey")
+
 
 ### Test association between each NPS and module eigengenes (linear regression)
 ## Nested list: one list per cohort, each a list of results per NPS
 allsumms_list <- sapply(cohorts, function(acohort) {
     MEs_thiscohort <- MEs_per_cohort[[acohort]]
-    testmodules <- setdiff(colnames(MEs_thiscohort), "MEgrey")   ## exclude grey
 
     res <- sapply(nps, function(anps) {
         out <- rbindlist(lapply(testmodules, RunPerNPSTest,
@@ -234,7 +296,8 @@ allsumms_list <- sapply(cohorts, function(acohort) {
 }, simplify = FALSE)
 
 ## Flatten: across NPS within cohort
-allsumms_list2 <- sapply(allsumms_list, function(x) { rbindlist(x, idcol = "NPS") }, simplify = FALSE)
+allsumms_list2 <- sapply(allsumms_list, function(x) { rbindlist(x, idcol = "NPS") },
+                         simplify = FALSE)
 
 ## Add qvalues
 for(acohort in cohorts) {
@@ -269,15 +332,24 @@ setorder(allsumms_long, Pvalue)
 
 
 ### Test joint association between all NPS and module eigengenes (partial F-test)
-jointsumms_list <- sapply(cohorts, function(acohort) {
+## Set up lists to hold outputs - one element per cohort
+jointsumms_list <- list()
+jointfits_list <- list()  ## each element is list of model fit objects over cohorts
+
+for(acohort in cohorts) {
     MEs_thiscohort <- MEs_per_cohort[[acohort]]
-    testmodules <- setdiff(colnames(MEs_thiscohort), "MEgrey")
-    rbindlist(lapply(testmodules, RunJointNPSTest,
-                     aphenodata = phenos_list[[acohort]],
-                     amedata    = MEs_thiscohort,
-                     nps        = nps,
-                     covars     = covars))
-}, simplify = FALSE)
+
+    outlist <- sapply(testmodules, RunJointNPSTest,
+                      aphenodata = phenos_list[[acohort]],
+                      amedata    = MEs_thiscohort,
+                      nps        = nps,
+                      covars     = covars, simplify = FALSE)
+
+    jointfits_list[[acohort]]  <- sapply(outlist, function(x) { x$fit_full }, simplify = FALSE)
+    jointsumms_list[[acohort]] <- rbindlist(sapply(outlist, function(x) { x$summtab }, simplify = FALSE))
+    rm(list = c("MEs_thiscohort", "outlist"))
+}
+
 
 ## Add multiple testing correction and sig columns (within each cohort)
 for(acohort in cohorts) {
@@ -315,7 +387,7 @@ setorder(jointsumms_long, Pvalue, eigengene, cohort)
 setcolorder(jointsumms_long, c("eigengene", "NPS", "cohort"))
 
 
-### Combine per-cohort F-test p-values across cohorts (Stouffer)
+### Cross-cohort F-test strategy 1: Stouffer p-value combination
 stouffer_summ <- jointsumms_long[, {
     sc <- StoufferCombine(Pvalue, N, weighting = args$stouffer_weights)
     list(n_cohorts = sc$n_cohorts,
@@ -334,18 +406,31 @@ stouffer_summ[p.BH < 0.05, sig_BH05 := "sig_BH05"]
 stouffer_summ[p.bonf < 0.05, sig_bonf05 := "sig_bonf05"]
 
 
-## calculate inflation factor
-chisq.all <- qchisq(stouffer_summ[, Pvalue], 1, lower.tail=FALSE)
-lambda.median.all <- median(chisq.all) / qchisq(0.5,1)
-lambdatext.all <- bquote(lambda ~ '=' ~ .(signif(lambda.median.all, 4)))
+qq_stouffer <- Drawqq(stouffer_summ$Pvalue,
+                      "Cross-cohort Stouffer p-value combination for joint F-test results")
 
 
-##  Draw qq plot
-n.na <- sum(is.na(stouffer_summ$Pvalue))
-titleqq <- paste0("F-test cross-cohort combined p-value (Stouffer)")
-qq_stouffer <- qqunif.plot(stouffer_summ[!is.na(Pvalue), Pvalue],
-                   maintitle=titleqq, subxlab=lambdatext.all,
-                   par.settings=list(par.sub.text=list(cex=1)))
+### Cross-cohort F-test strategy 2: Meta-analysis
+jointmeta_list <- sapply(testmodules, function(amodule) {
+    currfits <- lapply(cohorts, function(acohort) { jointfits_list[[acohort]][[amodule]] })
+
+    res <- PoolNPSFixed(currfits, nps)
+}, simplify = FALSE)
+
+## Extract F-test meta-analysis results for all modules to a table
+jointmeta_summ <- rbindlist(lapply(jointmeta_list, function(x) { x$joint }), idcol = "module")
+setorder(jointmeta_summ, Pvalue)
+
+## Add multiple testing correction and sig columns
+jointmeta_summ[Pvalue < 0.05, sig_p05 := "sig_nominal05"]
+jointmeta_summ[, p.BH := p.adjust(Pvalue, method = "BH")]
+jointmeta_summ[, p.bonf := p.adjust(Pvalue, method = "bonferroni")]
+jointmeta_summ[p.BH < 0.05, sig_BH05 := "sig_BH05"]
+jointmeta_summ[p.bonf < 0.05, sig_bonf05 := "sig_bonf05"]
+
+
+## Draw qq plot
+qq_jointmeta <- Drawqq(jointmeta_summ$Pvalue, "Cross-cohort meta-analysis of joint F-test results")
 
 
 ### FINISH ###
@@ -355,6 +440,9 @@ write.table(jointsumms_long, file = outfiles[["joint_Ftest"]],
             row.names = FALSE, quote = FALSE, sep = "\t")
 write.table(stouffer_summ,   file = outfiles[["stouffer"]],
             row.names = FALSE, quote = FALSE, sep = "\t")
+write.table(jointmeta_summ,   file = outfiles[["jointmeta"]],
+            row.names = FALSE, quote = FALSE, sep = "\t")
+
 
 pdf(outfiles[["qq_per-domain"]], height = 7, width = 7)
 for(x in qq_perdomain) { print(x) }
@@ -367,5 +455,9 @@ dev.off()
 
 pdf(outfiles[["qq_stouffer"]], height = 7, width = 7)
 print(qq_stouffer)
+dev.off()
+
+pdf(outfiles[["qq_jointmeta"]], height = 7, width = 7)
+print(qq_jointmeta)
 dev.off()
 

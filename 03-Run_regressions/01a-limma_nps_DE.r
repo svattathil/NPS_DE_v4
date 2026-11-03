@@ -62,7 +62,7 @@ args <- parser$parse_args()
 ## Check arguments
 CheckOptions("analysis", c("basic", "severity", "males", "females",
                            "males_nocovar", "females_nocovar",
-                           "e4_adj", "latfactor"))
+                           "e4_adj", "latfactor", "ADonly"))
 CheckOptions("svchoice", c("withSV", "noSV"))
 CheckOptions("cohort", c("OHSU", "rush", "emory"))
 
@@ -105,15 +105,17 @@ outfiles <- list(
 )
 
 if(args$analysis == "basic") {
-    outfiles[["cond_ind"]]      <- paste0("cond_ind_",    args$svchoice, "_", args$cohort, ".tsv")
-    outfiles[["joint_ftest"]]   <- paste0("joint_Ftest_", args$svchoice, "_", args$cohort, ".tsv")
-    outfiles[["cond_ind_qq"]]   <- paste0("cond_ind_",    args$svchoice, "_", args$cohort, "qqplot.pdf")
-    outfiles[["joint_qq"]]      <- paste0("joint_Ftest_", args$svchoice, "_", args$cohort, "qqplot.pdf")
+    mid_id <- paste0(args$svchoice, "_", args$cohort)
+    outfiles[["cond_ind"]]      <- paste0("cond_ind_",    mid_id, ".tsv")
+    outfiles[["joint_ftest"]]   <- paste0("joint_Ftest_", mid_id, ".tsv")
+    outfiles[["cond_ind_qq"]]   <- paste0("cond_ind_",    mid_id, "qqplot.pdf")
+    outfiles[["joint_qq"]]      <- paste0("joint_Ftest_", mid_id, "qqplot.pdf")
 }
 
 ## These files are per domain, so define name using a function
 outfiles[["SA_plot"]] <- function(adomain) {
-    file.path(outdir, diag_dir, paste0(runid, "_", args$cohort, "_", make.names(adomain), "_pvalue_plotSA.png"))
+    file.path(outdir, diag_dir, paste0(runid, "_", args$cohort, "_",
+                                       make.names(adomain), "_pvalue_plotSA.png"))
 }
 
 

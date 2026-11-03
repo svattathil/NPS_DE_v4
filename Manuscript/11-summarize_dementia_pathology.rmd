@@ -162,7 +162,7 @@ PlotCategorical("UDS_dx", merged$emory)
 
 ```
 
-```{r }
+```{r prepare-AD-variable}
 
 ```
 

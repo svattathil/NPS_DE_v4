@@ -28,6 +28,7 @@ library(argparse)
 library(WGCNA)
 library(ggplot2)
 library(robust)
+library(qvalue)
 
 rm(list = ls())
 ```
@@ -36,6 +37,7 @@ rm(list = ls())
 ```{r functions, include = FALSE}
 ###### FUNCTIONS ######
 source("~/comsv/Svattathil_Library/svattathil_functions.r")
+source("~/comsv/Svattathil_Library/manhattan_and_qq_plot_functions.r")
 
 GetCoefficientAndSE <- function(regression.out, type, var="miRNA") {
     if(type=="ordinal") { return(summary(regression.out)$coefficients[var, c("Value", "Std. Error")]) }
@@ -73,7 +75,7 @@ parser <- ArgumentParser()
 parser$add_argument("--cohort", type="character", help="OHSU, rush, or emory", default = "emory")
 parser$add_argument("--softpower", type="integer", help="value for softpower", default = 9)
 parser$add_argument("--cutheight", type="double", help="value for mergeCutHeight", default = 0.30)
-parser$add_argument("--residset", type="character", default="regressSVs", help="")
+parser$add_argument("--residset", type="character", default="ignoreSVs", help="")
 parser$add_argument("--network_set", type="character", help="cohort-specific or consensus",
                     default = "consensus")
 
@@ -123,8 +125,8 @@ if(args$network_set == "cohort-specific") {
 
 if(args$network_set == "consensus") {
     indir <- paste0("2_Pipeline/04-Build_networks/Using_", args$residset, "/Consensus/",
-             "_Auto_softpower", args$auto_softpower, "/")
-    runid <- paste0("auto_softpower", args$auto_softpower, "_", args$cohort)
+             "Auto_softpower", args$softpower, "/")
+    runid <- paste0("auto_softpower", args$softpower, "_", args$cohort)
     
 }
 
@@ -140,9 +142,9 @@ MyMkdir(outdir)
 
 outfiles <- lapply(list(
     regress_stats    = "_eigengene_regress_stats_latent_factors.txt",
-    sigmodules       = "_associated_modules_latent_factors.txt"
+    sigmodules       = "_associated_modules_latent_factors.txt",
+    qq               = "_eigengene_latent_factors_qqplot.pdf"
 ), function(x) { paste0(outdir, runid, x) })
-
 
 ```
 
@@ -396,6 +398,24 @@ if(nrow(sigassoc) > 0) {
 ```
 
 
+```{r draw-qq-plot}
+pvec <- as.vector(unlist(pvals_dt[, pval_cols, with = FALSE]))
+
+## calculate inflation factor
+chisq.all <- qchisq(pvec, 1, lower.tail=FALSE)
+lambda.median.all <- median(chisq.all) / qchisq(0.5,1)
+lambdatext.all <- bquote(lambda ~ '=' ~ .(signif(lambda.median.all, 4)))
+
+
+##  Draw qq plot
+titleqq <- paste0(args$cohort, " - Module association with latent factor(s)")
+qqplot <- qqunif.plot(pvec,
+                      maintitle=titleqq, subxlab=lambdatext.all,
+                      par.settings=list(par.sub.text=list(cex=1)))
+qqplot
+```
+
+
 ```{r finish-gaussian}
 ### Prepare then write regression stats
 coeffs.dt <- data.frame(coeffs)
@@ -409,6 +429,17 @@ setnames(pvals.dt, factor_names, paste0(factor_names, "_pval"))
 
 regress_stats <- merge(coeffs.dt, pvals.dt, by = "module")
 
+## sort by p-value for first factor (arbitrary)
+col1 <- paste0(factor_names[1], "_pval")
+setorderv(regress_stats, col1)
+
+### For each factor, calculate BH p-values
+for(acol in paste0(factor_names, "_pval"))
+{
+    regress_stats[[paste0(factor_names, "_p.BH")]] <- p.adjust(regress_stats[[acol]], method = "BH")
+}
+rm(acol)
+
 ### Write table of regression summary statistics
 write.table(regress_stats, file = outfiles[["regress_stats"]],
             row.names = FALSE, quote = FALSE, sep = "\t")
@@ -417,5 +448,10 @@ write.table(regress_stats, file = outfiles[["regress_stats"]],
 ### Write significant module-trait association table
 write.table(pvals_dt, file = outfiles[["sigmodules"]],
             row.names = FALSE, quote = FALSE, sep = "\t")
+
+## Draw qq plot to separate file
+pdf(outfiles$qq)
+print(qqplot)
+dev.off()
 
 ```

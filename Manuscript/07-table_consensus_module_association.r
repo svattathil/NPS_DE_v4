@@ -37,7 +37,7 @@ infiles[["enrichment"]] <- paste0(indir,
                                   "pthresh1_gene_set_enrichment.xlsx")
 infiles[["sig_latfac"]] <- sapply(cohorts, function(acohort) {
     paste0(indir, "DEA_latent_factors/",
-           "auto_softpower9_associated_modules_latent_factors_", acohort, ".txt") })
+           "auto_softpower9_", acohort, "_associated_modules_latent_factors.txt") })
 infiles[["multi"]] <- sapply(cohorts, function(acohort) {
     paste0(indir, "Multivariate/",
            "eigengene_multivar_", acohort, "_regression_stats.txt") })
