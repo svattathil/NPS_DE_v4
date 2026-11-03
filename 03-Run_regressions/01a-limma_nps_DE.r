@@ -75,8 +75,9 @@ set.seed(args$seed)
 infiles <- list(
     phenos = paste0("2_Pipeline/02-Prepare_analysis_data/",
                     "phenos_cleaned_SVs_", args$cohort, ".txt"),
-    prot   = "2_Pipeline/01-Explore_data/prot.pcafiltered.log2norm.txt",
-    e4_dat = "0_Data/From_v3/e4_phenos_allcohorts.txt"
+    prot     = "2_Pipeline/01-Explore_data/prot.pcafiltered.log2norm.txt",
+    e4_dat   = "0_Data/From_v3/e4_phenos_allcohorts.txt",
+    ad_patho = "2_Pipeline/02-Prepare_analysis_data/AD_pathologic_diagnosis_allcohorts.txt"
 )
 if(args$analysis == "latfactor") {
     infiles$fac_scores <- paste0("2_Pipeline/02-Prepare_analysis_data/Latent_factors/",
@@ -142,7 +143,7 @@ mincount <- ifelse(args$analysis %in% c("males", "females"), 25, 50)
 
 ## covars for this run
 ## SVs will be added on the fly if useSV is TRUE
-if(args$analysis %in% c("basic", "severity", "latfactor")) {
+if(args$analysis %in% c("basic", "severity", "latfactor", "ADonly")) {
     covars <- c("Batch", "pmi", "age_death", "msex")
     fac_covars <- c("Batch")
 }
@@ -168,6 +169,7 @@ if(args$analysis %in% c("e4_adj")) {
 pheno  <- fread(infiles$pheno)
 prot   <- fread(infiles$prot)
 e4_dat <- fread(infiles$e4_dat)
+ad_patho <- fread(infiles$ad_patho)
 
 if(args$analysis == "latfactor") {
     fac_scores <- fread(infiles$fac_scores)
@@ -186,6 +188,9 @@ pheno[, (oldsvs) := NULL]
 ## Merge in e4 expression
 pheno[e4_dat, e4_expression := i.e4_expression, on = "protsample"]
 
+## Merge in pathologic diagnosis
+pheno[ad_patho, ad_patho_diagnosis := i.AD_patho_diagnosis, on = "protsample"]
+
 ## Merge in factor scores, if necessary
 ## Currently assuming there is only one factor
 if(args$analysis == "latfactor") {
@@ -199,6 +204,10 @@ if(args$analysis == "males") {
 
 if(args$analysis == "females") {
     pheno <- pheno[msex == 0, ]
+}
+
+if(args$analysis == "ADonly") {
+    pheno <- pheno[ad_patho_diagnosis == 1, ]
 }
 
 ## Do some formatting
