@@ -42,15 +42,15 @@ args <- parser$parse_args()
 ## Check arguments
 CheckOptions("analysis", c("basic", "severity", "males", "females",
                            "males_nocovar", "females_nocovar",
-                           "e4_adj", "latfactor", "cond_ind"))
+                           "e4_adj", "latfactor", "cond_ind", "ADonly"))
 CheckOptions("svchoice", c("withSV", "noSV"))
 
 ## Define runid
 runid <- paste0(args$analysis, "_", args$svchoice)
 
-## Define outcomes and subset of cohorts (if necessary)
+## Define outcomes, and subset of cohorts if necessary
 if(args$analysis %in% c("basic", "noSV", "cond_ind",  "e4_adj", "males", "females",
-                        "males_nocovar", "females_nocovar")) {
+                        "males_nocovar", "females_nocovar", "ADonly")) {
     npsvars <- npsvars.bin
 }
 
