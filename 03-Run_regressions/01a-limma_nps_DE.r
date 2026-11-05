@@ -62,7 +62,7 @@ args <- parser$parse_args()
 ## Check arguments
 CheckOptions("analysis", c("basic", "severity", "males", "females",
                            "males_nocovar", "females_nocovar",
-                           "e4_adj", "latfactor", "ADonly"))
+                           "e4_adj", "latfactor", "ADonly", "AD_adj"))
 CheckOptions("svchoice", c("withSV", "noSV"))
 CheckOptions("cohort", c("OHSU", "rush", "emory"))
 
@@ -158,12 +158,19 @@ if(args$analysis %in% c("males_nocovar", "females_nocovar")) {
     fac_covars <- NULL
 }
 
-
 if(args$analysis %in% c("e4_adj")) {
     covars <- c("Batch", "pmi", "age_death", "msex", "e4_expression")
     fac_covars <- c("Batch")
 }
 
+if(args$analysis %in% c("AD_adj")) {
+    if(args$cohort == "emory") { ## All emory participants have AD, so don't include AD variable
+        covars <- c("Batch", "pmi", "age_death", "msex")
+    } else{
+        covars <- c("Batch", "pmi", "age_death", "msex", "AD_patho_diagnosis")
+    }
+    fac_covars <- c("Batch")
+}
 
 ### Read data
 pheno  <- fread(infiles$pheno)
@@ -189,7 +196,7 @@ pheno[, (oldsvs) := NULL]
 pheno[e4_dat, e4_expression := i.e4_expression, on = "protsample"]
 
 ## Merge in pathologic diagnosis
-pheno[ad_patho, ad_patho_diagnosis := i.AD_patho_diagnosis, on = "protsample"]
+pheno[ad_patho, AD_patho_diagnosis := i.AD_patho_diagnosis, on = "protsample"]
 
 ## Merge in factor scores, if necessary
 ## Currently assuming there is only one factor
@@ -207,7 +214,7 @@ if(args$analysis == "females") {
 }
 
 if(args$analysis == "ADonly") {
-    pheno <- pheno[ad_patho_diagnosis == 1, ]
+    pheno <- pheno[AD_patho_diagnosis == 1, ]
 }
 
 ## Do some formatting

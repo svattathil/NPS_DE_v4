@@ -2,7 +2,7 @@
 #SBATCH --job-name=wrapper03_1
 #SBATCH --nodes=1
 #SBATCH --mem=16G
-#SBATCH --array=7,14
+#SBATCH --array=8,16
 #SBATCH --cpus-per-task=1
 #SBATCH --time=0-2:00:00 
 #SBATCH --output=Slurmout/%x-%A_%a.o
@@ -64,51 +64,55 @@ run_limma_script01() {
 
 ## The first set of tasks includes SVs as covariates
 ## The second set does not
-if (( SLURM_ARRAY_TASK_ID >= 1 && SLURM_ARRAY_TASK_ID <= 7 )); then
+if (( SLURM_ARRAY_TASK_ID >= 1 && SLURM_ARRAY_TASK_ID <= 8 )); then
     svchoice="withSV"
-elif (( SLURM_ARRAY_TASK_ID >= 8 && SLURM_ARRAY_TASK_ID <= 16 )); then
+elif (( SLURM_ARRAY_TASK_ID >= 9 && SLURM_ARRAY_TASK_ID <= 18 )); then
     svchoice="noSV"
 else
-    echo "Error: SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID} is outside 1-16" >&2
+    echo "Error: SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID} is outside 1-18" >&2
     exit 1
 fi
 
 
 ## 1. Run limma
 case $SLURM_ARRAY_TASK_ID in
-    1|8)
+    1|9)
 	analysis=basic
 	run_limma_script01 $analysis $svchoice
 	;;
-    2|9)
+    2|10)
 	analysis=severity
 	run_limma_script01 $analysis $svchoice OHSU emory
         ;;
-    3|10)
+    3|11)
 	analysis=males
-	#run_limma_script01 $analysis $svchoice
+	run_limma_script01 $analysis $svchoice
         ;;
-    4|11)
+    4|12)
 	analysis=females
-	#run_limma_script01 $analysis $svchoice
+	run_limma_script01 $analysis $svchoice
         ;;
-    5|12)
+    5|13)
 	analysis=e4_adj
 	run_limma_script01 $analysis $svchoice
         ;;
-    6|13)
+    6|14)
 	analysis=latfactor
 	run_limma_script01 $analysis $svchoice
         ;;
-    7|14)
+    7|15)
 	analysis=ADonly
 	run_limma_script01 $analysis $svchoice
         ;;
-    15)
+    8|16)
+	analysis=AD_adj
+	#run_limma_script01 $analysis $svchoice
+        ;;
+    17)
 	analysis=males_nocovar
 	run_limma_script01 $analysis $svchoice
         ;;
-    16)
+    18)
 	analysis=females_nocovar
 	run_limma_script01 $analysis $svchoice
         ;;
